@@ -1,12 +1,8 @@
-import math
-import os
-import warnings
-from dataclasses import dataclass
 from typing import Callable, Optional, Tuple, Union
 
 import torch
 import torch.nn as nn
-from transformers.modeling_utils import ALL_ATTENTION_FUNCTIONS, PreTrainedModel, SequenceSummary
+from transformers.modeling_utils import ALL_ATTENTION_FUNCTIONS
 from transformers.pytorch_utils import Conv1D, find_pruneable_heads_and_indices, prune_conv1d_layer
 from transformers.utils import logging
 
