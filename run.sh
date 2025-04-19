@@ -7,6 +7,6 @@ python run_gpt2_clm_lm.py \
     --per_device_eval_batch_size 8 \
     --do_train \
     --do_eval \
-    --num_train_epochs 48 \
-    --logging_steps 100 \
-    --output_dir ../tmp/test-clm
+    --num_train_epochs 96 \
+    --save_steps 2000 \
+    --output_dir ./tmp/test-clm

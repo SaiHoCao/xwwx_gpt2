@@ -549,8 +549,7 @@ def main():
                 batched=True,
             )
 
-    if training_args.do_train:
-        print("train_dataset")  
+    if training_args.do_train: 
         if "train" not in tokenized_datasets:
             raise ValueError("--do_train requires a train dataset")
         train_dataset = lm_datasets["train"]
@@ -559,7 +558,6 @@ def main():
             train_dataset = train_dataset.select(range(max_train_samples))
 
     if training_args.do_eval:
-        print("eval_dataset")
         if "validation" not in tokenized_datasets:
             raise ValueError("--do_eval requires a validation dataset")
         eval_dataset = lm_datasets["validation"]
@@ -573,9 +571,8 @@ def main():
                 # like past_key_values, but logits always come first
                 logits = logits[0]
             return logits.argmax(dim=-1)
-        print("eval_metric")
+        
         metric = evaluate.load("./metrics/accuracy", cache_dir=model_args.cache_dir)
-        print("eval_metric ")
         def compute_metrics(eval_preds):
             preds, labels = eval_preds
             # preds have the same shape as the labels, after the argmax(-1) has been calculated
