@@ -52,6 +52,8 @@ from transformers.trainer_utils import get_last_checkpoint
 from transformers.utils import check_min_version, send_example_telemetry
 from transformers.utils.versions import require_version
 
+from transformers.models.gpt2 import modeling_gpt2
+from model import GPT2AttentionXWWX
 
 # Will error if the minimal version of Transformers is not installed. Remove at your own risks.
 check_min_version("4.52.0.dev0")
@@ -423,6 +425,7 @@ def main():
             if model_args.torch_dtype in ["auto", None]
             else getattr(torch, model_args.torch_dtype)
         )
+        modeling_gpt2.GPT2Attention = GPT2AttentionXWWX
         model = AutoModelForCausalLM.from_pretrained(
             model_args.model_name_or_path,
             from_tf=bool(".ckpt" in model_args.model_name_or_path),
@@ -547,6 +550,7 @@ def main():
             )
 
     if training_args.do_train:
+        print("train_dataset")  
         if "train" not in tokenized_datasets:
             raise ValueError("--do_train requires a train dataset")
         train_dataset = lm_datasets["train"]
@@ -555,6 +559,7 @@ def main():
             train_dataset = train_dataset.select(range(max_train_samples))
 
     if training_args.do_eval:
+        print("eval_dataset")
         if "validation" not in tokenized_datasets:
             raise ValueError("--do_eval requires a validation dataset")
         eval_dataset = lm_datasets["validation"]
@@ -568,9 +573,9 @@ def main():
                 # like past_key_values, but logits always come first
                 logits = logits[0]
             return logits.argmax(dim=-1)
-
-        metric = evaluate.load("accuracy", cache_dir=model_args.cache_dir)
-
+        print("eval_metric")
+        metric = evaluate.load("./metrics/accuracy", cache_dir=model_args.cache_dir)
+        print("eval_metric ")
         def compute_metrics(eval_preds):
             preds, labels = eval_preds
             # preds have the same shape as the labels, after the argmax(-1) has been calculated
@@ -596,6 +601,7 @@ def main():
 
     # Training
     if training_args.do_train:
+        logger.info("*** Train ***")
         checkpoint = None
         if training_args.resume_from_checkpoint is not None:
             checkpoint = training_args.resume_from_checkpoint
