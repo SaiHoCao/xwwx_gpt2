@@ -54,6 +54,7 @@ from transformers.utils.versions import require_version
 
 from transformers.models.gpt2 import modeling_gpt2
 from model import GPT2AttentionXWWX
+from peft import LoraConfig, get_peft_model
 
 # Will error if the minimal version of Transformers is not installed. Remove at your own risks.
 check_min_version("4.52.0.dev0")
@@ -401,7 +402,9 @@ def main():
             logger.info(f"Overriding config: {model_args.config_overrides}")
             config.update_from_string(model_args.config_overrides)
             logger.info(f"New config: {config}")
-
+    
+    # config.use_cache = False
+    # logger.info(f"ude cache {config.use_cache}")
     tokenizer_kwargs = {
         "cache_dir": model_args.cache_dir,
         "use_fast": model_args.use_fast_tokenizer,
@@ -437,10 +440,35 @@ def main():
             torch_dtype=torch_dtype,
             low_cpu_mem_usage=model_args.low_cpu_mem_usage,
         )
+        model.config.use_cache = False  
+        model.config._attn_implementation = "eager"
+        model.config.reorder_and_upcast_attn = True
+        # model.GPT2Attention = GPT2AttentionXWWX
     else:
         model = AutoModelForCausalLM.from_config(config, trust_remote_code=model_args.trust_remote_code)
+        model.config.use_cache = False  
+        model.config._attn_implementation = "eager"
+        model.config.reorder_and_upcast_attn = True
+        # model.GPT2Attention = GPT2AttentionXWWX
         n_params = sum({p.data_ptr(): p.numel() for p in model.parameters()}.values())
         logger.info(f"Training new model from scratch - Total size={n_params / 2**20:.2f}M params")
+
+    print(model.config.use_cache)
+    print(model.config._attn_implementation)
+    print(model.config.reorder_and_upcast_attn)
+    print(model.config)
+
+    # 添加LoRA配置 ↓↓↓
+    lora_config = LoraConfig(
+        r=8,
+        lora_alpha=32,
+        target_modules=["attn"],  # 关键修改点！可能需要调整
+        lora_dropout=0.1,
+        bias="none",
+        task_type="CAUSAL_LM",
+    )
+    model = get_peft_model(model, lora_config)
+    model.print_trainable_parameters()
 
     # We resize the embeddings only when necessary to avoid index errors. If you are creating a model from scratch
     # on a small vocab and want a smaller embedding size, remove this test.
@@ -549,7 +577,7 @@ def main():
                 batched=True,
             )
 
-    if training_args.do_train: 
+    if training_args.do_train:
         if "train" not in tokenized_datasets:
             raise ValueError("--do_train requires a train dataset")
         train_dataset = lm_datasets["train"]
@@ -571,8 +599,9 @@ def main():
                 # like past_key_values, but logits always come first
                 logits = logits[0]
             return logits.argmax(dim=-1)
-        
+
         metric = evaluate.load("./metrics/accuracy", cache_dir=model_args.cache_dir)
+
         def compute_metrics(eval_preds):
             preds, labels = eval_preds
             # preds have the same shape as the labels, after the argmax(-1) has been calculated
@@ -598,7 +627,6 @@ def main():
 
     # Training
     if training_args.do_train:
-        logger.info("*** Train ***")
         checkpoint = None
         if training_args.resume_from_checkpoint is not None:
             checkpoint = training_args.resume_from_checkpoint
