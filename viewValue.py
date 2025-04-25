@@ -1,44 +1,123 @@
 from transformers import AutoModelForCausalLM
 from transformers.trainer_utils import get_last_checkpoint
 import torch
+import numpy as np
+import matplotlib.pyplot as plt
 
-# 1. 加载预训练模型结构（如果检查点不包含模型配置）
-model = AutoModelForCausalLM.from_pretrained("../../gpt2")
+def load_model_from_checkpoint(checkpoint_path):
+    # 获取最新的检查点路径
+    last_checkpoint = get_last_checkpoint(checkpoint_path)
+    print(f"找到最新检查点：{last_checkpoint}")
 
-# 2. 获取最新的检查点路径
-# last_checkpoint = get_last_checkpoint("./tmp/test-clm-ori")
-last_checkpoint = get_last_checkpoint("./tmp/test-clm_")
-print(f"找到最新检查点：{last_checkpoint}")
+    # 加载检查点参数到模型
+    if last_checkpoint is not None:
+        model = AutoModelForCausalLM.from_pretrained(last_checkpoint)
+        return model
+    else:
+        raise ValueError(f"未在 {checkpoint_path} 找到检查点")
 
-# 3. 加载检查点参数到模型
-if last_checkpoint is not None:
-    # 方法1：直接加载整个检查点目录（自动包含参数和配置）
-    model = AutoModelForCausalLM.from_pretrained(last_checkpoint)
+# 加载两个模型
+model_ori = load_model_from_checkpoint("./tmp/test-clm-ori")
+model_xwwx = load_model_from_checkpoint("./tmp/test-clm-xwwx")
+
+# 比较模型权重
+def compare_weights(model1, model2, model1_name="ori", model2_name="XWWX"):
+    print(f"\n===== {model1_name} vs {model2_name} weight =====")
     
-    # 方法2：仅加载参数（需手动加载.bin文件）
-    # checkpoint = torch.load(f"{last_checkpoint}/pytorch_model.bin", map_location='cpu')
-    # model.load_state_dict(checkpoint, strict=False)
-else:
-    raise ValueError("未找到检查点")
+    differences = []
+    param_names = []
+    
+    # 遍历所有参数并比较
+    for (name1, param1), (name2, param2) in zip(model1.named_parameters(), model2.named_parameters()):
+        if name1 != name2:
+            print(f"警告：参数名不匹配: {name1} vs {name2}")
+            continue
+            
+        # 计算差异
+        diff = torch.abs(param1 - param2)
+        avg_diff = torch.mean(diff).item()
+        max_diff = torch.max(diff).item()
+        
+        # 记录有意义的差异
+        if avg_diff > 1e-6:  # 忽略非常小的差异
+            differences.append((name1, avg_diff, max_diff))
+            param_names.append(name1)
+            
+    # 排序并打印差异最大的参数
+    differences.sort(key=lambda x: x[1], reverse=True)
+    
+    if differences:
+        print(f"\n差异最大的前10个参数:")
+        for i, (name, avg_diff, max_diff) in enumerate(differences[:10]):
+            print(f"{i+1}. {name}: 平均差异={avg_diff:.6f}, 最大差异={max_diff:.6f}")
+    else:
+        print("未发现显著差异")
+    
+    return differences, param_names
 
-# # 4. 查看参数示例（打印第一层的权重）
-# for name, param in model.named_parameters():
-#     if 'weight' in name:  # 过滤出权重参数
-#         print(f"参数层：{name}")
+# 执行比较
+differences, param_names = compare_weights(model_ori, model_xwwx)
 
-#         print(f"形状：{param.shape}")
-#         print(f"前5个值：{param.data[0][:5]}\n")  # 打印第一行前5个值
-#         break  # 只显示一个示例
+# 可视化一些差异
+def visualize_weight_difference(model1, model2, param_name, model1_name="ori", model2_name="XWWX"):
+    # 获取指定参数
+    param1 = dict(model1.named_parameters())[param_name].detach().cpu().numpy().flatten()
+    param2 = dict(model2.named_parameters())[param_name].detach().cpu().numpy().flatten()
+    
+    # 计算差异
+    diff = np.abs(param1 - param2)
+    
+    # 创建图表
+    plt.figure(figsize=(15, 5))
+    
+    # 绘制权重分布直方图
+    plt.subplot(1, 3, 1)
+    plt.hist(param1, bins=50, alpha=0.5, label=model1_name)
+    plt.hist(param2, bins=50, alpha=0.5, label=model2_name)
+    plt.legend()
+    plt.title(f"{param_name} weight")
+    
+    # 绘制差异直方图
+    plt.subplot(1, 3, 2)
+    plt.hist(diff, bins=50)
+    plt.title(f"{param_name} diff")
+    
+    # 绘制前100个值的对比
+    plt.subplot(1, 3, 3)
+    sample_size = min(100, len(param1))
+    indices = np.arange(sample_size)
+    plt.plot(indices, param1[:sample_size], label=model1_name)
+    plt.plot(indices, param2[:sample_size], label=model2_name)
+    plt.legend()
+    plt.title(f"{param_name} {sample_size}values diff")
+    
+    plt.tight_layout()
+    plt.savefig(f"{param_name.replace('.', '_')}_comparison.png")
+    print(f"已保存 {param_name} 的比较图表")
 
-# 访问第0层注意力中的 Q/K/V 投影权重（形状：768, 2304）
-layer0_attn = model.transformer.h[0].attn.c_attn
-print(layer0_attn)
-print("Q/K/V投影权重：", layer0_attn.weight.shape)  # 输出: torch.Size([768, 2304])
+# 如果找到差异，可视化前三个差异最大的参数
+if differences:
+    for name, _, _ in differences[:3]:
+        visualize_weight_difference(model_ori, model_xwwx, name)
 
-# 访问第0层注意力输出的投影权重（形状：768, 768）
-layer0_attn_proj = model.transformer.h[0].attn.c_proj
-print(layer0_attn_proj)
-print("输出投影权重：", layer0_attn_proj.weight.shape)  # 输出: torch.Size([768, 768])
+# 还可以比较特定层的注意力权重
+def compare_attention_weights(model1, model2, layer_idx=0, model1_name="ori", model2_name="XWWX"):
+    # 提取第layer_idx层的注意力权重
+    attn1_qkv = model1.transformer.h[layer_idx].attn.c_attn.weight
+    attn2_qkv = model2.transformer.h[layer_idx].attn.c_attn.weight
+    
+    attn1_proj = model1.transformer.h[layer_idx].attn.c_proj.weight
+    attn2_proj = model2.transformer.h[layer_idx].attn.c_proj.weight
+    
+    # 计算差异
+    qkv_diff = torch.abs(attn1_qkv - attn2_qkv)
+    proj_diff = torch.abs(attn1_proj - attn2_proj)
+    
+    print(f"\n===== 第{layer_idx}层注意力权重比较 =====")
+    print(f"Q/K/V投影权重差异: 平均={torch.mean(qkv_diff).item():.6f}, 最大={torch.max(qkv_diff).item():.6f}")
+    print(f"输出投影权重差异: 平均={torch.mean(proj_diff).item():.6f}, 最大={torch.max(proj_diff).item():.6f}")
 
-# 查看具体数值（例如第一行前5个值）
-print(layer0_attn.weight.data[:, 10:])  # 输出张量值
+# 比较第0层的注意力权重
+compare_attention_weights(model_ori, model_xwwx, layer_idx=0)
+
+print("\n分析完成！")

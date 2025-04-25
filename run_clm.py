@@ -452,10 +452,6 @@ def main():
         n_params = sum({p.data_ptr(): p.numel() for p in model.parameters()}.values())
         logger.info(f"Training new model from scratch - Total size={n_params / 2**20:.2f}M params")
 
-    print(model.config.use_cache)
-    print(model.config._attn_implementation)
-    print(model.config.reorder_and_upcast_attn)
-    print(model.config)
 
     # We resize the embeddings only when necessary to avoid index errors. If you are creating a model from scratch
     # on a small vocab and want a smaller embedding size, remove this test.
