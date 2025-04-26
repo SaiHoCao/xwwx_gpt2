@@ -624,6 +624,7 @@ class GPT2AttentionXWWX(nn.Module):
         encoder_attention_mask,
         attention_mask=None,
         head_mask=None,
+        use_bf16=False,
     ):
 
         if encoder_hidden_states is not None:
@@ -650,6 +651,19 @@ class GPT2AttentionXWWX(nn.Module):
                 self.split_size, dim=0)
 
             encoder_hidden_states = hidden_states
+            
+        # 如果启用bf16，转换精度
+        if use_bf16 and torch.cuda.is_available():
+            # 转换权重和偏置
+            w_q = w_q.to(torch.bfloat16)
+            w_k = w_k.to(torch.bfloat16)
+            w_v = w_v.to(torch.bfloat16)
+            q_bias = q_bias.to(torch.bfloat16)
+            k_bias = k_bias.to(torch.bfloat16)
+            v_bias = v_bias.to(torch.bfloat16)
+            # 转换输入
+            hidden_states = hidden_states.to(torch.bfloat16)
+            encoder_hidden_states = encoder_hidden_states.to(torch.bfloat16)
 
         """使用x·W_q·W_k^T·x^T直接计算注意力分数"""
         """(x*W_q + q_bias)(x*W_k + k_bias)^T === query*(W_k^T*x^T + k_bias^T) ===  query*W_k^T*x^T + query*k_bias^T"""
@@ -669,16 +683,6 @@ class GPT2AttentionXWWX(nn.Module):
 
         bsz, num_heads, q_seq_len, dk = query.size()
         _, _, k_seq_len, _ = value.size()
-
-        # addmm
-        # value = torch.addmm(
-        #     v_bias, encoder_hidden_states.view(-1, encoder_hidden_states.size(-1)), w_v)
-        # value = value.view(
-        #     *encoder_hidden_states.shape[:-1], -1, self.head_dim).transpose(1, 2)
-
-        # query = torch.addmm(
-        #     q_bias, hidden_states.view(-1, hidden_states.size(-1)), w_q)
-        # query = query.view(bsz, -1, hidden_states.size(-1))
 
         # 计算缩放因子。
         scale_factor = 1.0
@@ -709,7 +713,11 @@ class GPT2AttentionXWWX(nn.Module):
 
         # scale
         attn_weights = attn_weights * scale_factor
-
+        
+        # 如果使用了bf16，将结果转回原始精度用于后续处理
+        if use_bf16 and torch.cuda.is_available():
+            attn_weights = attn_weights.to(torch.float32)
+                    
         # 对于自注意力，应用因果掩码
         if not self.is_cross_attention:
             # if only "normal" attention layer implements causal mask
@@ -756,6 +764,10 @@ class GPT2AttentionXWWX(nn.Module):
         attn_output = torch.matmul(attn_weights, value)
         attn_output = attn_output.transpose(1, 2)
         # attn_output: [bsz,q_seq_len,num_heads,head_dim]
+        
+        # 如果使用了bf16，将输出转回原始精度
+        if use_bf16 and torch.cuda.is_available():
+            attn_output = attn_output.to(torch.float32)
 
         return attn_output, attn_weights
 
@@ -766,7 +778,14 @@ class GPT2AttentionXWWX(nn.Module):
         encoder_attention_mask,
         attention_mask=None,
         head_mask=None,
+        use_bf16=False,
     ):
+        # 如果启用bf16，转换输入
+        if use_bf16 and torch.cuda.is_available():
+            hidden_states = hidden_states.to(torch.bfloat16)
+            if encoder_hidden_states is not None:
+                encoder_hidden_states = encoder_hidden_states.to(torch.bfloat16)
+                
         if encoder_hidden_states is not None:
             if not hasattr(self, "q_attn"):
                 raise ValueError(
@@ -794,9 +813,7 @@ class GPT2AttentionXWWX(nn.Module):
 
         bsz, num_heads, q_seq_len, dk = query_states.size()
         _, _, k_seq_len, _ = key_states.size()
-        # 预分配attn_weights用于`baddbmm`
-        # attn_weights = torch.empty(
-        #     bsz * num_heads, q_seq_len, k_seq_len, dtype=torch.float32, device=query.device)
+        
         # 计算缩放因子。
         scale_factor = 1.0
         if self.scale_attn_weights:
@@ -808,17 +825,20 @@ class GPT2AttentionXWWX(nn.Module):
         q, k = query_states.reshape(-1, q_seq_len, dk), key_states.transpose(
             -1, -2
         ).reshape(-1, dk, k_seq_len)
-        # 使用baddbmm进行批量矩阵乘法，计算Q·K^T
-        # attn_weights = torch.baddbmm(
-        #     attn_weights, q.float(), k.float(), beta=0, alpha=scale_factor)
-
+        
+        # 使用bf16精度进行矩阵乘法
         attn_weights = torch.matmul(q, k)
         attn_weights = attn_weights * scale_factor
+        
+        # 如果使用了bf16，将权重转回float32用于后续处理
+        # if use_bf16 and torch.cuda.is_available():
+        #     attn_weights = attn_weights.to(torch.float32)
 
         # 重塑回原始形状
         attn_weights = attn_weights.reshape(
             bsz, num_heads, q_seq_len, k_seq_len)
-        # # 对于自注意力，应用因果掩码
+            
+        # 对于自注意力，应用因果掩码
         if not self.is_cross_attention:
             # if only "normal" attention layer implements causal mask
             # 序列长度
@@ -865,6 +885,10 @@ class GPT2AttentionXWWX(nn.Module):
         attn_output = torch.matmul(attn_weights, value_states)
         attn_output = attn_output.transpose(1, 2)
         # attn_output: [bsz,q_seq_len,num_heads,head_dim]
+        
+        # 如果使用了bf16，将输出转回原始精度
+        if use_bf16 and torch.cuda.is_available():
+            attn_output = attn_output.to(torch.float32)
 
         return attn_output, attn_weights
 
@@ -887,6 +911,7 @@ class GPT2AttentionXWWX(nn.Module):
             encoder_attention_mask,
             attention_mask,
             head_mask=head_mask,
+            use_bf16=True
         )
         # attn_output, attn_weights = self._ori_attn(
         #     hidden_states,
@@ -894,6 +919,7 @@ class GPT2AttentionXWWX(nn.Module):
         #     encoder_attention_mask,
         #     attention_mask,
         #     head_mask=head_mask,
+        #     use_bf16=True
         # )
 
         # 重塑输出并应用投影

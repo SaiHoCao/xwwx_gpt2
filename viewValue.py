@@ -116,6 +116,25 @@ def compare_attention_weights(model1, model2, layer_idx=0, model1_name="ori", mo
     print(f"\n===== 第{layer_idx}层注意力权重比较 =====")
     print(f"Q/K/V投影权重差异: 平均={torch.mean(qkv_diff).item():.6f}, 最大={torch.max(qkv_diff).item():.6f}")
     print(f"输出投影权重差异: 平均={torch.mean(proj_diff).item():.6f}, 最大={torch.max(proj_diff).item():.6f}")
+    
+    # 打印部分具体数据示例
+    sample_size = 5
+    print(f"\n{model1_name}模型 Q/K/V 权重示例 (前{sample_size}行，前5列):")
+    print(attn1_qkv[:sample_size, :5].detach().cpu().numpy())
+    
+    print(f"\n{model2_name}模型 Q/K/V 权重示例 (前{sample_size}行，前5列):")
+    print(attn2_qkv[:sample_size, :5].detach().cpu().numpy())
+    
+    print(f"\n权重差异 (前{sample_size}行，前5列):")
+    print(qkv_diff[:sample_size, :5].detach().cpu().numpy())
+    
+    # 打印最大差异的位置和值
+    max_diff_idx = torch.argmax(qkv_diff)
+    max_row, max_col = max_diff_idx // qkv_diff.shape[1], max_diff_idx % qkv_diff.shape[1]
+    print(f"\n最大差异位置: 行={max_row.item()}, 列={max_col.item()}")
+    print(f"最大差异值: {qkv_diff[max_row, max_col].item():.6f}")
+    print(f"{model1_name}值: {attn1_qkv[max_row, max_col].item():.6f}")
+    print(f"{model2_name}值: {attn2_qkv[max_row, max_col].item():.6f}")
 
 # 比较第0层的注意力权重
 compare_attention_weights(model_ori, model_xwwx, layer_idx=0)

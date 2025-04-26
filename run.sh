@@ -7,5 +7,6 @@ python run_clm.py \
     --per_device_eval_batch_size 8 \
     --do_train \
     --do_eval \
+    --fp16 True \
     --num_train_epochs 3 \
     --output_dir ./tmp/test-clm-xwwx
