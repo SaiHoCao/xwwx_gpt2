@@ -632,7 +632,7 @@ class GPT2AttentionXWWX(nn.Module):
             encoder_attention_mask,
             attention_mask,
             head_mask=head_mask,
-            use_bf16=True
+            # use_bf16=True
         )
 
         # 重塑输出并应用投影
@@ -972,7 +972,7 @@ class GPT2AttentionOri(nn.Module):
             encoder_attention_mask,
             attention_mask,
             head_mask=head_mask,
-            use_bf16=True
+            # use_bf16=True
         )
 
         # 重塑输出并应用投影

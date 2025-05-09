@@ -89,64 +89,64 @@ def compare_weights(model1, model2, model3, model4, model1_name="raw", model2_na
 # 执行比较
 differences, param_names = compare_weights(model_raw, model_default, model_ori, model_xwwx)
 
-# 可视化一些差异
-def visualize_weight_difference(model1, model2, model3, model4, param_name, model1_name="raw", model2_name="default", model3_name="ori", model4_name="xwwx"):
-    # 获取指定参数
-    param1 = dict(model1.named_parameters())[param_name].detach().cpu().numpy().flatten()
-    param2 = dict(model2.named_parameters())[param_name].detach().cpu().numpy().flatten()
-    param3 = dict(model3.named_parameters())[param_name].detach().cpu().numpy().flatten()
-    param4 = dict(model4.named_parameters())[param_name].detach().cpu().numpy().flatten()
+# # 可视化一些差异
+# def visualize_weight_difference(model1, model2, model3, model4, param_name, model1_name="raw", model2_name="default", model3_name="ori", model4_name="xwwx"):
+#     # 获取指定参数
+#     param1 = dict(model1.named_parameters())[param_name].detach().cpu().numpy().flatten()
+#     param2 = dict(model2.named_parameters())[param_name].detach().cpu().numpy().flatten()
+#     param3 = dict(model3.named_parameters())[param_name].detach().cpu().numpy().flatten()
+#     param4 = dict(model4.named_parameters())[param_name].detach().cpu().numpy().flatten()
     
-    # 计算差异
-    diff12 = np.abs(param1 - param2)
-    diff23 = np.abs(param2 - param3)
-    diff34 = np.abs(param3 - param4)
-    diff13 = np.abs(param1 - param3)
-    diff14 = np.abs(param1 - param4)
-    diff24 = np.abs(param2 - param4)
+#     # 计算差异
+#     diff12 = np.abs(param1 - param2)
+#     diff23 = np.abs(param2 - param3)
+#     diff34 = np.abs(param3 - param4)
+#     diff13 = np.abs(param1 - param3)
+#     diff14 = np.abs(param1 - param4)
+#     diff24 = np.abs(param2 - param4)
     
-    # 创建图表
-    plt.figure(figsize=(15, 5))
+#     # 创建图表
+#     plt.figure(figsize=(15, 5))
     
-    # 绘制权重分布直方图
-    plt.subplot(1, 3, 1)
-    plt.hist(param1, bins=50, alpha=0.25, label=model1_name)
-    plt.hist(param2, bins=50, alpha=0.25, label=model2_name)
-    plt.hist(param3, bins=50, alpha=0.25, label=model3_name)
-    plt.hist(param4, bins=50, alpha=0.25, label=model4_name)
-    plt.legend()
-    plt.title(f"{param_name} weight")
+#     # 绘制权重分布直方图
+#     plt.subplot(1, 3, 1)
+#     plt.hist(param1, bins=50, alpha=0.25, label=model1_name)
+#     plt.hist(param2, bins=50, alpha=0.25, label=model2_name)
+#     plt.hist(param3, bins=50, alpha=0.25, label=model3_name)
+#     plt.hist(param4, bins=50, alpha=0.25, label=model4_name)
+#     plt.legend()
+#     plt.title(f"{param_name} weight")
     
-    # 绘制差异直方图
-    plt.subplot(1, 3, 2)
-    plt.hist(diff12, bins=50, alpha=0.25, label=f"{model1_name}-{model2_name}")
-    plt.hist(diff23, bins=50, alpha=0.25, label=f"{model2_name}-{model3_name}")
-    plt.hist(diff34, bins=50, alpha=0.25, label=f"{model3_name}-{model4_name}")
-    plt.hist(diff13, bins=50, alpha=0.25, label=f"{model1_name}-{model3_name}")
-    plt.hist(diff14, bins=50, alpha=0.25, label=f"{model1_name}-{model4_name}")
-    plt.hist(diff24, bins=50, alpha=0.25, label=f"{model2_name}-{model4_name}")
-    plt.legend()
-    plt.title(f"{param_name} diff")
+#     # 绘制差异直方图
+#     plt.subplot(1, 3, 2)
+#     plt.hist(diff12, bins=50, alpha=0.25, label=f"{model1_name}-{model2_name}")
+#     plt.hist(diff23, bins=50, alpha=0.25, label=f"{model2_name}-{model3_name}")
+#     plt.hist(diff34, bins=50, alpha=0.25, label=f"{model3_name}-{model4_name}")
+#     plt.hist(diff13, bins=50, alpha=0.25, label=f"{model1_name}-{model3_name}")
+#     plt.hist(diff14, bins=50, alpha=0.25, label=f"{model1_name}-{model4_name}")
+#     plt.hist(diff24, bins=50, alpha=0.25, label=f"{model2_name}-{model4_name}")
+#     plt.legend()
+#     plt.title(f"{param_name} diff")
     
-    # 绘制前100个值的对比
-    plt.subplot(1, 3, 3)
-    sample_size = min(100, len(param1))
-    indices = np.arange(sample_size)
-    plt.plot(indices, param1[:sample_size], label=model1_name)
-    plt.plot(indices, param2[:sample_size], label=model2_name)
-    plt.plot(indices, param3[:sample_size], label=model3_name)
-    plt.plot(indices, param4[:sample_size], label=model4_name)
-    plt.legend()
-    plt.title(f"{param_name} {sample_size}values diff")
+#     # 绘制前100个值的对比
+#     plt.subplot(1, 3, 3)
+#     sample_size = min(100, len(param1))
+#     indices = np.arange(sample_size)
+#     plt.plot(indices, param1[:sample_size], label=model1_name)
+#     plt.plot(indices, param2[:sample_size], label=model2_name)
+#     plt.plot(indices, param3[:sample_size], label=model3_name)
+#     plt.plot(indices, param4[:sample_size], label=model4_name)
+#     plt.legend()
+#     plt.title(f"{param_name} {sample_size}values diff")
     
-    plt.tight_layout()
-    plt.savefig(f"{param_name.replace('.', '_')}_comparison.png")
-    print(f"已保存 {param_name} 的比较图表")
+#     plt.tight_layout()
+#     plt.savefig(f"{param_name.replace('.', '_')}_comparison.png")
+#     print(f"已保存 {param_name} 的比较图表")
 
-# 如果找到差异，可视化前三个差异最大的参数
-if differences:
-    for name, _, _ in differences[:3]:
-        visualize_weight_difference(model_raw, model_default, model_ori, model_xwwx, name)
+# # 如果找到差异，可视化前三个差异最大的参数
+# if differences:
+#     for name, _, _ in differences[:3]:
+#         visualize_weight_difference(model_raw, model_default, model_ori, model_xwwx, name)
 
 # 比较特定层的注意力权重
 def compare_attention_weights(model1, model2, model3, model4, layer_idx=0, model1_name="raw", model2_name="default", model3_name="ori", model4_name="xwwx"):
@@ -314,15 +314,6 @@ def compare_attention_weights(model1, model2, model3, model4, layer_idx=0, model
     print(f"{model2_name}-{model4_name}:")
     print(v_diff24[:sample_size, :5].detach().cpu().numpy())
     
-    # 打印最大差异的位置和值
-    max_diff_idx = torch.argmax(qkv_diff12)
-    max_row, max_col = max_diff_idx // qkv_diff12.shape[1], max_diff_idx % qkv_diff12.shape[1]
-    print(f"\n最大差异位置: 行={max_row.item()}, 列={max_col.item()}")
-    print(f"{model1_name}-{model2_name}最大差异值: {qkv_diff12[max_row, max_col].item():.6f}")
-    print(f"{model1_name}值: {attn1_qkv[max_row, max_col].item():.6f}")
-    print(f"{model2_name}值: {attn2_qkv[max_row, max_col].item():.6f}")
-    print(f"{model3_name}值: {attn3_qkv[max_row, max_col].item():.6f}")
-    print(f"{model4_name}值: {attn4_qkv[max_row, max_col].item():.6f}")
 
 # 比较第0层的注意力权重
 compare_attention_weights(model_raw, model_default, model_ori, model_xwwx, layer_idx=0)

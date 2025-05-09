@@ -440,17 +440,14 @@ def main():
             torch_dtype=torch_dtype,
             low_cpu_mem_usage=model_args.low_cpu_mem_usage,
         )
-        # 或 
-        # model.GPT2Attention = GPT2AttentionXWWX
-        # model.GPT2Attention = GPT2AttentionOri
+
 
     else:
         # 更换ATTN
         # modeling_gpt2.GPT2Attention = GPT2AttentionXWWX
         # modeling_gpt2.GPT2Attention = GPT2AttentionOri
         model = AutoModelForCausalLM.from_config(config, trust_remote_code=model_args.trust_remote_code)
-        # model.GPT2Attention = GPT2AttentionXWWX
-        # model.GPT2Attention = GPT2AttentionOri
+
         n_params = sum({p.data_ptr(): p.numel() for p in model.parameters()}.values())
         logger.info(f"Training new model from scratch - Total size={n_params / 2**20:.2f}M params")
 

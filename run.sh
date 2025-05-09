@@ -8,4 +8,4 @@ python run_clm.py \
     --do_train \
     --do_eval \
     --num_train_epochs 3 \
-    --output_dir ./tmp/test-clm
+    --output_dir ./tmp/test-clm-
