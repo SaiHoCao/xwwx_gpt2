@@ -613,6 +613,216 @@ class GPT2AttentionXWWX(nn.Module):
 
         return attn_output, attn_weights
 
+    def forward(
+        self,
+        hidden_states: Optional[Tuple[torch.FloatTensor]],
+        layer_past: Optional[Tuple[torch.Tensor]] = None,
+        attention_mask: Optional[torch.FloatTensor] = None,
+        head_mask: Optional[torch.FloatTensor] = None,
+        encoder_hidden_states: Optional[torch.Tensor] = None,
+        encoder_attention_mask: Optional[torch.FloatTensor] = None,
+        use_cache: Optional[bool] = False,
+        output_attentions: Optional[bool] = False,
+        **kwargs,
+    ) -> Tuple[Union[torch.Tensor, Tuple[torch.Tensor]], ...]:
+
+        attn_output, attn_weights = self._xwwx_attn_bias(
+            hidden_states,
+            encoder_hidden_states,
+            encoder_attention_mask,
+            attention_mask,
+            head_mask=head_mask,
+            use_bf16=True
+        )
+
+        # 重塑输出并应用投影
+        attn_output = attn_output.reshape(
+            *attn_output.shape[:-2], -1).contiguous()
+        # attn_output:[bsz,q_seq_len,hid_dim]
+        attn_output = self.c_proj(attn_output)
+        # attn_output:[bsz,q_seq_len,hid_dim]
+        # 应用残差连接和dropout
+        attn_output = self.resid_dropout(attn_output)
+        # present 缓存的K、V
+        present = None
+        outputs = (attn_output, present)
+        if output_attentions:
+            outputs += (attn_weights,)
+
+        return outputs  # a, present, (attentions)
+
+class GPT2AttentionOri(nn.Module):
+    def __init__(self, config, is_cross_attention=False, layer_idx=None):
+        super().__init__()
+        # 保存配置并获取最大位置嵌入数。
+        self.config = config
+        max_positions = config.max_position_embeddings
+        # 注册一个下三角矩阵作为buffer，用于实现因果自注意力掩码
+        self.register_buffer(
+            "bias",
+            torch.tril(
+                torch.ones((max_positions, max_positions), dtype=torch.bool)
+            ).view(1, 1, max_positions, max_positions),
+            persistent=False,
+        )
+        # 注册一个负无穷大作为buffer，用于实现掩码
+        self.register_buffer(
+            "masked_bias", torch.tensor(-1e4), persistent=False)
+        # 获取隐藏维度、头数和头维度。
+        self.embed_dim = config.hidden_size
+        self.num_heads = config.num_attention_heads
+        self.head_dim = self.embed_dim // self.num_heads
+        # 设置分割大小为隐藏维度。
+        self.split_size = self.embed_dim
+        # 检查头数和隐藏维度是否匹配。
+        if self.head_dim * self.num_heads != self.embed_dim:
+            raise ValueError(
+                f"`embed_dim` must be divisible by num_heads (got `embed_dim`: {self.embed_dim} and `num_heads`:"
+                f" {self.num_heads})."
+            )
+
+        # 获取是否需要缩放注意力权重。
+        self.scale_attn_weights = config.scale_attn_weights
+        # 获取是否为交叉注意力。
+        self.is_cross_attention = is_cross_attention
+
+        # 层级注意力缩放、重新排序和上转换
+        self.scale_attn_by_inverse_layer_idx = config.scale_attn_by_inverse_layer_idx
+        # 获取层级索引。
+        self.layer_idx = layer_idx
+        # 获取是否需要重新排序和上转换。
+        self.reorder_and_upcast_attn = config.reorder_and_upcast_attn
+
+        # 如果为交叉注意力，则使用两块KV，否则使用三块QKV。
+        # Conv1D基本上就像一个线性层，但权重是转置的。
+        if self.is_cross_attention:
+            self.c_attn = Conv1D(2 * self.embed_dim, self.embed_dim)
+            self.q_attn = Conv1D(self.embed_dim, self.embed_dim)
+        else:
+            self.c_attn = Conv1D(3 * self.embed_dim, self.embed_dim)
+        self.c_proj = Conv1D(self.embed_dim, self.embed_dim)
+
+        # 获取注意力dropout和残差dropout。
+        self.attn_dropout = nn.Dropout(config.attn_pdrop)
+        self.resid_dropout = nn.Dropout(config.resid_pdrop)
+        # 设置是否为因果注意力。
+        self.is_causal = True
+        # 初始化一个空集合，用于存储已修剪的头。
+        self.pruned_heads = set()
+
+    # 修剪头部。（（未使用
+    def prune_heads(self, heads):
+        if len(heads) == 0:
+            return
+        # 找到可修剪的头和索引。
+        heads, index = find_pruneable_heads_and_indices(
+            heads, self.num_heads, self.head_dim, self.pruned_heads
+        )
+        # 将索引连接起来。
+        index_attn = torch.cat(
+            [index, index + self.split_size, index + (2 * self.split_size)]
+        )
+        # 修剪卷积层。
+        # Prune conv1d layers
+        self.c_attn = prune_conv1d_layer(self.c_attn, index_attn, dim=1)
+        self.c_proj = prune_conv1d_layer(self.c_proj, index, dim=0)
+        # 更新超参数。
+        # Update hyper params
+        self.split_size = (self.split_size // self.num_heads) * (
+            self.num_heads - len(heads)
+        )
+        self.num_heads = self.num_heads - len(heads)
+        self.pruned_heads = self.pruned_heads.union(heads)
+
+    # 上转换和重新排序注意力。（（未使用
+    def _upcast_and_reordered_attn(
+        self, query, key, value, attention_mask=None, head_mask=None
+    ):
+        # 使用 `torch.baddbmm`（一个更高效的alpha参数用于缩放--来自Megatron-LM）
+        # 获取输入形状。bsz: batch_size, num_heads: 头数, q_seq_len: 查询序列长度, dk: 每个头维度
+        bsz, num_heads, q_seq_len, dk = query.size()
+        # 获取键序列长度。
+        _, _, k_seq_len, _ = key.size()
+        # 预分配attn_weights用于`baddbmm`
+        # attn_weights = torch.empty(
+        #     bsz * num_heads, q_seq_len, k_seq_len, dtype=torch.float32, device=query.device)
+        # 计算缩放因子。
+        scale_factor = 1.0
+        if self.scale_attn_weights:
+            scale_factor /= float(value.size(-1)) ** 0.5
+        # 如果需要，按层级缩放。
+        if self.scale_attn_by_inverse_layer_idx:
+            scale_factor /= float(self.layer_idx + 1)
+        # 关闭自动计算并重新排序（缩放K为1/根号(dk)）
+        # Upcast (turn off autocast) and reorder (Scale K by 1 / root(dk))
+        # with torch.amp.autocast(query.device.type, enabled=False):
+        # q k^T
+        q, k = query.reshape(-1, q_seq_len, dk), key.transpose(-1, -2).reshape(
+            -1, dk, k_seq_len
+        )
+        # 使用baddbmm进行批量矩阵乘法，计算Q·K^T
+        # attn_weights = torch.baddbmm(
+        #     attn_weights, q.float(), k.float(), beta=0, alpha=scale_factor)
+
+        attn_weights = torch.matmul(q, k)
+
+        attn_weights = attn_weights * scale_factor
+
+        # # 重塑回原始形状
+        attn_weights = attn_weights.reshape(
+            bsz, num_heads, q_seq_len, k_seq_len)
+        # 对于自注意力，应用因果掩码
+        if not self.is_cross_attention:
+            # if only "normal" attention layer implements causal mask
+            # 序列长度
+            query_length, key_length = query.size(-2), key.size(-2)
+            # 计算因果掩码
+            causal_mask = self.bias[
+                :, :, key_length - query_length: key_length, :key_length
+            ]
+            # 获取掩码值（负无穷大）
+            mask_value = torch.finfo(attn_weights.dtype).min
+            # Need to be a tensor, otherwise we get error: `RuntimeError: expected scalar type float but found double`.
+            # Need to be on the same device, otherwise `RuntimeError: ..., x and y to be on the same device`
+            mask_value = torch.tensor(
+                mask_value, dtype=attn_weights.dtype, device=attn_weights.device
+            )
+            # 应用掩码
+            attn_weights = torch.where(causal_mask, attn_weights, mask_value)
+        # 应用额外的注意力掩码（如果提供）
+        if attention_mask is not None:
+            # Apply the attention mask
+            attn_weights = attn_weights + attention_mask
+        # 应用softmax得到注意力权重
+        attn_weights = nn.functional.softmax(attn_weights, dim=-1)
+
+        # Downcast (if necessary) back to V's dtype (if in mixed-precision) -- No-Op if otherwise
+        if attn_weights.dtype != torch.float32:
+            raise RuntimeError(
+                "Error with upcasting, attn_weights does not have dtype torch.float32"
+            )
+
+        # 转换数据类型
+        attn_weights = attn_weights.type(value.dtype)
+        # 应用dropout
+        attn_weights = self.attn_dropout(attn_weights)
+
+        # Mask heads if we want to
+        # 应用头部掩码（如果提供）
+        if head_mask is not None:
+            attn_weights = attn_weights * head_mask
+
+        # 计算注意力输出
+        # attn_weights: [bsz,num_heads,q_seq_len,k_seq_len]
+        # value: [bsz,num_heads,k_seq_len,head_dim]
+        # attn_output: [bsz,num_heads,q_seq_len,head_dim]
+        attn_output = torch.matmul(attn_weights, value)
+        attn_output = attn_output.transpose(1, 2)
+        # attn_output: [bsz,q_seq_len,num_heads,head_dim]
+
+        return attn_output, attn_weights
+
+
     # 原来的注意力计算方式，但是指定到确定的计算方式中
     def _ori_attn(
         self,
@@ -628,10 +838,13 @@ class GPT2AttentionXWWX(nn.Module):
             hidden_states = hidden_states.to(torch.bfloat16)
             if encoder_hidden_states is not None:
                 encoder_hidden_states = encoder_hidden_states.to(torch.bfloat16)
-                self.q_attn.weight = self.q_attn.weight.to(torch.bfloat16)
-                self.q_attn.bias = self.q_attn.bias.to(torch.bfloat16)
-        self.c_attn.weight = self.c_attn.weight.to(torch.bfloat16)
-        self.c_attn.bias = self.c_attn.bias.to(torch.bfloat16)
+                # 使用with torch.no_grad()来避免修改requires_grad
+                with torch.no_grad():
+                    self.q_attn.weight.data = self.q_attn.weight.data.to(torch.bfloat16)
+                    self.q_attn.bias.data = self.q_attn.bias.data.to(torch.bfloat16)
+            with torch.no_grad():
+                self.c_attn.weight.data = self.c_attn.weight.data.to(torch.bfloat16)
+                self.c_attn.bias.data = self.c_attn.bias.data.to(torch.bfloat16)
                 
         if encoder_hidden_states is not None:
             if not hasattr(self, "q_attn"):
@@ -678,8 +891,8 @@ class GPT2AttentionXWWX(nn.Module):
         attn_weights = attn_weights * scale_factor
         
         # 如果使用了bf16，将权重转回float32用于后续处理
-        # if use_bf16 and torch.cuda.is_available():
-        #     attn_weights = attn_weights.to(torch.float32)
+        if use_bf16 and torch.cuda.is_available():
+            attn_weights = attn_weights.to(torch.float32)
 
         # 重塑回原始形状
         attn_weights = attn_weights.reshape(
@@ -752,14 +965,7 @@ class GPT2AttentionXWWX(nn.Module):
         **kwargs,
     ) -> Tuple[Union[torch.Tensor, Tuple[torch.Tensor]], ...]:
 
-        # attn_output, attn_weights = self._xwwx_attn_bias(
-        #     hidden_states,
-        #     encoder_hidden_states,
-        #     encoder_attention_mask,
-        #     attention_mask,
-        #     head_mask=head_mask,
-        #     use_bf16=True
-        # )
+
         attn_output, attn_weights = self._ori_attn(
             hidden_states,
             encoder_hidden_states,

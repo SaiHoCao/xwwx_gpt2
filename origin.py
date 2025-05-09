@@ -1,5 +1,10 @@
+from transformers.models.gpt2 import modeling_gpt2
 from transformers import GPT2Model
+from model import GPT2AttentionXWWX
 
+
+# model.GPT2Attention = GPT2AttentionXWWX
+modeling_gpt2.GPT2Attention = GPT2AttentionXWWX
 model = GPT2Model.from_pretrained("../../gpt2")
 model.config.use_cache = False  
 model.config._attn_implementation = "eager"

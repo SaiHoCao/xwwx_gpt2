@@ -53,7 +53,7 @@ from transformers.utils import check_min_version, send_example_telemetry
 from transformers.utils.versions import require_version
 
 from transformers.models.gpt2 import modeling_gpt2
-from model import GPT2AttentionXWWX
+from model import GPT2AttentionXWWX,GPT2AttentionOri
 
 # Will error if the minimal version of Transformers is not installed. Remove at your own risks.
 check_min_version("4.52.0.dev0")
@@ -426,7 +426,9 @@ def main():
             if model_args.torch_dtype in ["auto", None]
             else getattr(torch, model_args.torch_dtype)
         )
+        # 更换ATTN
         # modeling_gpt2.GPT2Attention = GPT2AttentionXWWX
+        # modeling_gpt2.GPT2Attention = GPT2AttentionOri
         model = AutoModelForCausalLM.from_pretrained(
             model_args.model_name_or_path,
             from_tf=bool(".ckpt" in model_args.model_name_or_path),
@@ -438,13 +440,21 @@ def main():
             torch_dtype=torch_dtype,
             low_cpu_mem_usage=model_args.low_cpu_mem_usage,
         )
-        # 更换ATTN
+        # 或 
         # model.GPT2Attention = GPT2AttentionXWWX
+        # model.GPT2Attention = GPT2AttentionOri
+
     else:
+        # 更换ATTN
+        # modeling_gpt2.GPT2Attention = GPT2AttentionXWWX
+        # modeling_gpt2.GPT2Attention = GPT2AttentionOri
         model = AutoModelForCausalLM.from_config(config, trust_remote_code=model_args.trust_remote_code)
         # model.GPT2Attention = GPT2AttentionXWWX
+        # model.GPT2Attention = GPT2AttentionOri
         n_params = sum({p.data_ptr(): p.numel() for p in model.parameters()}.values())
         logger.info(f"Training new model from scratch - Total size={n_params / 2**20:.2f}M params")
+
+    print(model)
 
 
     # We resize the embeddings only when necessary to avoid index errors. If you are creating a model from scratch
