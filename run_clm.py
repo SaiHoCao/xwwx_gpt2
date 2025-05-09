@@ -402,8 +402,7 @@ def main():
             config.update_from_string(model_args.config_overrides)
             logger.info(f"New config: {config}")
     
-    # config.use_cache = False
-    # logger.info(f"ude cache {config.use_cache}")
+
     tokenizer_kwargs = {
         "cache_dir": model_args.cache_dir,
         "use_fast": model_args.use_fast_tokenizer,
@@ -439,16 +438,11 @@ def main():
             torch_dtype=torch_dtype,
             low_cpu_mem_usage=model_args.low_cpu_mem_usage,
         )
-        model.config.use_cache = False  
-        model.config._attn_implementation = "eager"
-        model.config.reorder_and_upcast_attn = True
-        model.GPT2Attention = GPT2AttentionXWWX
+        # 更换ATTN
+        # model.GPT2Attention = GPT2AttentionXWWX
     else:
         model = AutoModelForCausalLM.from_config(config, trust_remote_code=model_args.trust_remote_code)
-        model.config.use_cache = False  
-        model.config._attn_implementation = "eager"
-        model.config.reorder_and_upcast_attn = True
-        model.GPT2Attention = GPT2AttentionXWWX
+        # model.GPT2Attention = GPT2AttentionXWWX
         n_params = sum({p.data_ptr(): p.numel() for p in model.parameters()}.values())
         logger.info(f"Training new model from scratch - Total size={n_params / 2**20:.2f}M params")
 
