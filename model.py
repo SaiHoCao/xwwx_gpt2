@@ -382,8 +382,15 @@ class GPT2AttentionXWWX(nn.Module):
                 self.split_size, dim=0)
 
             encoder_hidden_states = hidden_states
-            
-            
+
+        # 计算80%分位数作为阈值
+        threshold = torch.quantile(encoder_hidden_states.abs().flatten(), 0.83)
+        encoder_hidden_states = torch.where(
+            encoder_hidden_states.abs() < threshold,
+            torch.zeros_like(encoder_hidden_states),
+            encoder_hidden_states
+        )    
+        
         # 如果启用bf16，转换精度
         if use_bf16 and torch.cuda.is_available():
             # 转换权重和偏置
@@ -623,21 +630,38 @@ class GPT2AttentionOri(nn.Module):
                 self.c_attn.bias.data = self.c_attn.bias.data.to(torch.bfloat16)
                 
         if encoder_hidden_states is not None:
+
             if not hasattr(self, "q_attn"):
                 raise ValueError(
                     "If class is used as cross attention, the weights `q_attn` have to be defined. "
                     "Please make sure to instantiate class with `GPT2Attention(..., is_cross_attention=True)`."
                 )
+            threshold = 0.45
+            encoder_hidden_states = torch.where(
+                encoder_hidden_states.abs() < threshold,
+                torch.zeros_like(encoder_hidden_states),
+                encoder_hidden_states
+            )   
             query_states = self.q_attn(hidden_states)
             key_states, value_states = self.c_attn(encoder_hidden_states).split(
                 self.split_size, dim=2
             )
             attention_mask = encoder_attention_mask
         else:
-            query_states, key_states, value_states = self.c_attn(hidden_states).split(
+            encoder_hidden_states = hidden_states
+            threshold = 0.45
+            encoder_hidden_states = torch.where(
+                encoder_hidden_states.abs() < threshold,
+                torch.zeros_like(encoder_hidden_states),
+                encoder_hidden_states
+            )   
+            query_states, _, _ = self.c_attn(hidden_states).split(
                 self.split_size, dim=2
             )
-
+            _, key_states, value_states = self.c_attn(encoder_hidden_states).split(
+                self.split_size, dim=2
+            )
+            
         # query_states:[bsz,q_seq_len,hid_dim]
         shape_q = (*query_states.shape[:-1], -1, self.head_dim)
         shape_kv = (*key_states.shape[:-1], -1, self.head_dim)

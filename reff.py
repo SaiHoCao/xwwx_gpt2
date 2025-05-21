@@ -39,12 +39,29 @@ def generate_text(prompt, model_type="default", max_length=30):
             do_sample=True,
             top_k=50,
             top_p=0.9,
-            pad_token_id=tokenizer.eos_token_id
+            pad_token_id=tokenizer.eos_token_id,
+            output_hidden_states=True,  # 确保输出hidden_states
+            return_dict_in_generate=True  # 返回字典格式
         )
     
+    # 获取hidden_states
+    hidden_states = outputs.hidden_states  # 这是一个元组，包含每一层的hidden_states
+    
+    # 保存hidden_states
+    torch.save(hidden_states, f'hidden_states_{model_type}.pt')
+    
     # 解码生成的文本
-    generated_text = tokenizer.decode(outputs[0], skip_special_tokens=True)
-    return generated_text
+    generated_text = tokenizer.decode(outputs.sequences[0], skip_special_tokens=True)
+    
+    # 打印hidden_states的形状信息
+    # print(f"\nHidden States信息:")
+    # for i, layer_states in enumerate(hidden_states):
+    #     # 每个layer_states是一个元组，包含每个时间步的hidden_state
+    #     print(f"第{i}层 hidden_states:")
+    #     for t, state in enumerate(layer_states):
+    #         print(f"  时间步{t} shape: {state.shape}")
+    
+    return generated_text, hidden_states
 
 if __name__ == "__main__":
     # 测试提示
