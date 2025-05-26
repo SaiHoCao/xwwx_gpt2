@@ -383,13 +383,13 @@ class GPT2AttentionXWWX(nn.Module):
 
             encoder_hidden_states = hidden_states
 
-        # 计算80%分位数作为阈值
-        threshold = torch.quantile(encoder_hidden_states.abs().flatten(), 0.83)
+        # 计算99%分位数作为阈值
+        threshold = torch.quantile(encoder_hidden_states.abs().flatten(), 1)
         encoder_hidden_states = torch.where(
             encoder_hidden_states.abs() < threshold,
             torch.zeros_like(encoder_hidden_states),
             encoder_hidden_states
-        )    
+        ) 
         
         # 如果启用bf16，转换精度
         if use_bf16 and torch.cuda.is_available():
@@ -636,7 +636,7 @@ class GPT2AttentionOri(nn.Module):
                     "If class is used as cross attention, the weights `q_attn` have to be defined. "
                     "Please make sure to instantiate class with `GPT2Attention(..., is_cross_attention=True)`."
                 )
-            threshold = 0.45
+            threshold = torch.quantile(encoder_hidden_states.abs().flatten(), 0.7)
             encoder_hidden_states = torch.where(
                 encoder_hidden_states.abs() < threshold,
                 torch.zeros_like(encoder_hidden_states),
@@ -649,7 +649,7 @@ class GPT2AttentionOri(nn.Module):
             attention_mask = encoder_attention_mask
         else:
             encoder_hidden_states = hidden_states
-            threshold = 0.45
+            threshold = torch.quantile(encoder_hidden_states.abs().flatten(), 0.7)
             encoder_hidden_states = torch.where(
                 encoder_hidden_states.abs() < threshold,
                 torch.zeros_like(encoder_hidden_states),

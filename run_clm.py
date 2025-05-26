@@ -428,7 +428,7 @@ def main():
             else getattr(torch, model_args.torch_dtype)
         )
         # 更换ATTN
-        # modeling_gpt2.GPT2Attention = GPT2AttentionXWWX
+        modeling_gpt2.GPT2Attention = GPT2AttentionXWWX
         # modeling_gpt2.GPT2Attention = GPT2AttentionOri
         model = AutoModelForCausalLM.from_pretrained(
             model_args.model_name_or_path,
@@ -445,7 +445,7 @@ def main():
 
     else:
         # 更换ATTN
-        # modeling_gpt2.GPT2Attention = GPT2AttentionXWWX
+        modeling_gpt2.GPT2Attention = GPT2AttentionXWWX
         # modeling_gpt2.GPT2Attention = GPT2AttentionOri
         model = AutoModelForCausalLM.from_config(config, trust_remote_code=model_args.trust_remote_code)
 
@@ -585,8 +585,8 @@ def main():
                 logits = logits[0]
             return logits.argmax(dim=-1)
 
-        # metric = evaluate.load("./metrics/accuracy", cache_dir=model_args.cache_dir)
-        metric = evaluate.load("./metrics/perplexity", cache_dir=model_args.cache_dir)
+        metric = evaluate.load("./metrics/accuracy", cache_dir=model_args.cache_dir)
+        # metric = evaluate.load("./metrics/perplexity", cache_dir=model_args.cache_dir)
 
         def compute_metrics(eval_preds):
             preds, labels = eval_preds
