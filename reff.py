@@ -1,6 +1,7 @@
 from transformers import GPT2LMHeadModel, GPT2Tokenizer
 from transformers.trainer_utils import get_last_checkpoint
 import torch
+import numpy as np
 
 def generate_text(prompt, model_type="default", max_length=30):
     # 根据模型类型选择checkpoint
@@ -10,10 +11,10 @@ def generate_text(prompt, model_type="default", max_length=30):
         last_checkpoint = get_last_checkpoint("./tmp/test-clm")  # 使用wikitext 微调，未改变gpt模型的chekpoint
         model_path = last_checkpoint
     elif model_type == "ori":
-        last_checkpoint = get_last_checkpoint("./tmp/test-clm-ori")  # 使用wikitext 微调，改变gpt模型Attn部分的指定到具体的原注意力计算模式
+        last_checkpoint = get_last_checkpoint("./tmp/test-clm-ori-sxv")  # 使用wikitext 微调，改变gpt模型Attn部分的指定到具体的原注意力计算模式
         model_path = last_checkpoint
     elif model_type == "xwwx":
-        last_checkpoint = get_last_checkpoint("./tmp/test-clm-xwwx")  # 使用wikitext 微调，改变gpt模型Attn部分的指定到xwwx注意力计算模式
+        last_checkpoint = get_last_checkpoint("./tmp/test-clm-xwwx-sxv")  # 使用wikitext 微调，改变gpt模型Attn部分的指定到xwwx注意力计算模式
         model_path = last_checkpoint
     else:
         raise ValueError("model_type must be one of: raw, default, ori, xwwx")
@@ -41,27 +42,36 @@ def generate_text(prompt, model_type="default", max_length=30):
             top_p=0.9,
             pad_token_id=tokenizer.eos_token_id,
             output_hidden_states=True,  # 确保输出hidden_states
+            output_attentions=True,     # 确保输出attention weights
             return_dict_in_generate=True  # 返回字典格式
         )
     
-    # 获取hidden_states
+    # 获取hidden_states和attention weights
     hidden_states = outputs.hidden_states  # 这是一个元组，包含每一层的hidden_states
+    attention_weights = outputs.attentions  # 这是一个元组，包含每一层的attention weights
     
-    # 保存hidden_states
+    # 保存hidden_states和attention weights
     torch.save(hidden_states, f'hidden_states_{model_type}.pt')
+    torch.save(attention_weights, f'attention_weights_{model_type}.pt')
     
     # 解码生成的文本
     generated_text = tokenizer.decode(outputs.sequences[0], skip_special_tokens=True)
     
-    # 打印hidden_states的形状信息
-    # print(f"\nHidden States信息:")
-    # for i, layer_states in enumerate(hidden_states):
-    #     # 每个layer_states是一个元组，包含每个时间步的hidden_state
-    #     print(f"第{i}层 hidden_states:")
-    #     for t, state in enumerate(layer_states):
-    #         print(f"  时间步{t} shape: {state.shape}")
+    # 打印attention weights的形状信息
+    print(f"\nAttention Weights信息:")
+    for i, layer_attentions in enumerate(attention_weights):
+        # 每个layer_attentions是一个元组，包含每个时间步的attention weights
+        print(f"第{i}层 attention weights:")
+        for t, attn in enumerate(layer_attentions):
+            print(f"  时间步{t} shape: {attn.shape}")
+            # 保存softmax之前的注意力矩阵
+            if i == 3:  # 第4层
+                scores_np = attn.detach().cpu().numpy()
+                save_path = f'scores_layer4_before_softmax_{model_type}.npy'
+                np.save(save_path, scores_np)
+                print(f"  已保存softmax之前的注意力矩阵到: {save_path}")
     
-    return generated_text, hidden_states
+    return generated_text, hidden_states, attention_weights
 
 if __name__ == "__main__":
     # 测试提示
