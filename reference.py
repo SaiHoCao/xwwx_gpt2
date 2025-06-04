@@ -29,7 +29,7 @@ def generate_text(prompt, model_type="default", max_length=30):
     # modeling_gpt2.GPT2Attention = GPT2AttentionXWWX
     model = GPT2LMHeadModel.from_pretrained(
         model_path,
-        use_cache=False  # 设置use_cache为False
+        use_cache=False # 设置use_cache为True
     )
     # 将模型移动到GPU
     model = model.to(device)
@@ -38,6 +38,8 @@ def generate_text(prompt, model_type="default", max_length=30):
     print(model)
     # 打印模型配置
     print(model.config)
+    print(model.config._attn_implementation)
+    print(model.config.reorder_and_upcast_attn)
     
     # 将模型设置为评估模式
     model.eval()
@@ -82,7 +84,7 @@ if __name__ == "__main__":
         print(f"GPU显存使用: {torch.cuda.memory_allocated(0)/1024**2:.2f}MB")
 
     print("=== 测试改变模型定向到XWWX注意力计算模式 ===")
-    generated_xwwx = generate_text(prompt, model_type="raw")
+    generated_xwwx = generate_text(prompt, model_type="xwwx")
     print(f"输入: {prompt}")
     print(f"生成: {generated_xwwx}")
     

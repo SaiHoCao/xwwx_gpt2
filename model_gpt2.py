@@ -335,6 +335,259 @@ class GPT2Attention(nn.Module):
 
         return outputs  # a, present, (attentions)
 
+class GPT2AttentionXWWX(nn.Module):
+    def __init__(self, config, layer_idx=None):
+        super().__init__()
+        self.config = config
+        max_positions = config.max_position_embeddings
+        self.register_buffer(
+            "bias",
+            torch.tril(torch.ones((max_positions, max_positions), dtype=torch.bool)).view(
+                1, 1, max_positions, max_positions
+            ),
+            persistent=False,
+        )
+        self.register_buffer("masked_bias", torch.tensor(-1e4), persistent=False)
+
+        self.embed_dim = config.hidden_size
+        self.num_heads = config.num_attention_heads
+        self.head_dim = self.embed_dim // self.num_heads
+        self.split_size = self.embed_dim
+        if self.head_dim * self.num_heads != self.embed_dim:
+            raise ValueError(
+                f"`embed_dim` must be divisible by num_heads (got `embed_dim`: {self.embed_dim} and `num_heads`:"
+                f" {self.num_heads})."
+            )
+
+        self.scale_attn_weights = config.scale_attn_weights
+
+
+        # Layer-wise attention scaling, reordering, and upcasting
+        self.scale_attn_by_inverse_layer_idx = config.scale_attn_by_inverse_layer_idx
+        self.layer_idx = layer_idx
+        self.reorder_and_upcast_attn = config.reorder_and_upcast_attn
+
+        
+        self.c_attn = Conv1D(3 * self.embed_dim, self.embed_dim)
+        self.c_proj = Conv1D(self.embed_dim, self.embed_dim)
+
+        self.attn_dropout = nn.Dropout(config.attn_pdrop)
+        self.resid_dropout = nn.Dropout(config.resid_pdrop)
+        self.is_causal = True
+
+        self.pruned_heads = set()
+    # 新的注意力计算方法
+    def _xwwx_attn_bias(
+        self,
+        hidden_states,
+        attention_mask=None,
+        head_mask=None,
+        use_bf16=False,
+    ):
+
+        # c_attn.weight的形状是[embed_dim, 3*embed_dim]
+        w_q, w_k, w_v = self.c_attn.weight.split(self.split_size, dim=1)
+        # c_attn.bias的形状是[3*embed_dim,]
+        q_bias, k_bias, v_bias = self.c_attn.bias.split(
+            self.split_size, dim=0)
+
+        inputx_kv = hidden_states
+
+        # past_x ????
+
+        # # 稀疏x_kv,计算70%分位数作为阈值
+        # threshold = torch.quantile(inputx_kv.abs().flatten(), 0.50)
+        # inputx_kv = torch.where(
+        #     inputx_kv.abs() < threshold,
+        #     torch.zeros_like(inputx_kv),
+        #     inputx_kv
+        # ) 
+        
+        # 如果启用bf16，转换精度
+        if use_bf16 and torch.cuda.is_available():
+            # 转换权重和偏置
+            w_q = w_q.to(torch.bfloat16)
+            w_k = w_k.to(torch.bfloat16)
+            w_v = w_v.to(torch.bfloat16)
+            q_bias = q_bias.to(torch.bfloat16)
+            k_bias = k_bias.to(torch.bfloat16)
+            v_bias = v_bias.to(torch.bfloat16)
+            # 转换输入
+            hidden_states = hidden_states.to(torch.bfloat16)
+            inputx_kv = inputx_kv.to(torch.bfloat16)
+
+        # 使用x·W_q·W_k^T·x^T直接计算注意力分数
+        # (x*W_q + q_bias)(x*W_k + k_bias)^T === query*(W_k^T*x^T + k_bias^T) ===  query*W_k^T*x^T + query*k_bias^T
+
+        # step1 计算query = x·w_q + q_bias
+        # x:[bsz, q/k_seq_len, embed_dim] ,w_q/k:[embed_dim, embed_dim], q/k_bias:[embed_dim,]
+        query_states = torch.matmul(hidden_states, w_q) + q_bias
+        shape_q = (*query_states.shape[:-1], -1, self.head_dim)
+        query = query_states.view(shape_q).transpose(
+            1, 2)  # [bsz, num_heads, q_seq_len,  head_dim]
+        
+
+        bsz, num_heads, q_seq_len, dk = query.size()
+        _,k_seq_len,_ = inputx_kv.size()
+
+        # 计算缩放因子。
+        scale_factor = 1.0
+        if self.scale_attn_weights:
+            scale_factor /= float(query.size(-1)) ** 0.5
+        # 如果需要，按层级缩放。
+        if self.scale_attn_by_inverse_layer_idx:
+            scale_factor /= float(self.layer_idx + 1)
+
+        # step2 计算query*w_k^T 和query*k_bias^T
+        # query [bsz, num_heads, q_seq_len,  head_dim] ,w_k:[embed_dim, embed_dim], k_bias:[embed_dim,]
+
+        # query * w_k^T
+        w_k = w_k.view(self.embed_dim, -1, self.head_dim)#[embed_dim, num_heads, head_dim]
+        q_k_t = torch.einsum("bnsh,enh->bnse", query, w_k)#[bsz,num_heads,q_seq_len,embed_dim]
+
+        # query * k_b^T
+        k_bias = k_bias.view(-1, self.head_dim)  # [num_heads,head_dim]
+        k_b_t_expanded = k_bias.unsqueeze(0).unsqueeze(2)  # [1,num_heads,1,head_dim]
+        k_bias_T = torch.matmul(query, k_b_t_expanded.transpose(-1, -2))#[bsz,num_heads,q_seq_len,1]
+
+        #  step3 query * w_k^T * x^T + query * k_bias^T
+        x_t = inputx_kv.transpose(-1, -2)#[batch_size, embed_dim, k_seq_len]
+        x_t_expand = x_t.unsqueeze(1).expand(-1, num_heads, -1, -1)#[batch_size,num_heads,embed_dim, k_seq_len]
+
+        attn_weights = torch.matmul(q_k_t, x_t_expand) + k_bias_T#[bsz,num_heads,q_seq_len,s_seq_len]
+
+        # scale
+        attn_weights = attn_weights * scale_factor
+        
+        # 对于自注意力，应用因果掩码
+        # if only "normal" attention layer implements causal mask
+        query_length, key_length = q_seq_len, k_seq_len
+        # print(f"query_length: {query_length}, key_length: {key_length}")
+        # 计算因果掩码
+        causal_mask = self.bias[
+            :, :, key_length - query_length: key_length, :key_length
+        ]
+        # 获取掩码值（负无穷大）
+        mask_value = torch.finfo(attn_weights.dtype).min
+        # Need to be a tensor, otherwise we get error: `RuntimeError: expected scalar type float but found double`.
+        # Need to be on the same device, otherwise `RuntimeError: ..., x and y to be on the same device`
+        mask_value = torch.tensor(
+            mask_value, dtype=attn_weights.dtype, device=attn_weights.device
+        )
+        # 应用掩码
+        attn_weights = torch.where(causal_mask, attn_weights, mask_value)
+        # 应用额外的注意力掩码（如果提供）
+        if attention_mask is not None:
+            # Apply the attention mask
+            attn_weights = attn_weights + attention_mask
+
+        # 应用softmax得到注意力权重
+        attn_weights = nn.functional.softmax(attn_weights, dim=-1)
+
+        # Downcast (if necessary) back to V's dtype (if in mixed-precision) -- No-Op if otherwise
+        if attn_weights.dtype != torch.float32:
+            raise RuntimeError(
+                "Error with upcasting, attn_weights does not have dtype torch.float32"
+            )
+
+        # 转换数据类型
+        attn_weights = attn_weights.type(inputx_kv.dtype)
+        # 应用dropout
+        attn_weights = self.attn_dropout(attn_weights)
+
+        # 应用头部掩码（如果提供）
+        if head_mask is not None:
+            attn_weights = attn_weights * head_mask
+        # attn_weights: [bsz,num_heads,q_seq_len,k_seq_len]
+
+
+        # 原SV
+        # value_states = torch.matmul(inputx_kv, w_v) + v_bias
+        # shape_v = (*value_states.shape[:-1], -1, self.head_dim)
+        # value = value_states.view(shape_v).transpose(
+        #     1, 2)  # [bsz, num_heads, k_seq_len,head_dim]
+        
+        # # 计算注意力输出
+        # # attn_weights: [bsz,num_heads,q_seq_len,k_seq_len]
+        # # value: [bsz,num_heads,k_seq_len,head_dim]
+        # # attn_output: [bsz,num_heads,q_seq_len,head_dim]
+        # attn_output = torch.matmul(attn_weights, value_states)
+        # attn_output = attn_output.transpose(1, 2)
+        # # attn_output: [bsz,q_seq_len,num_heads,head_dim]
+
+
+        #SXV
+        # inputx_kv: [bsz,k_seq_len,embed_dim]
+        # 将inputx_kv转换为多头形式
+        inputx_kv = inputx_kv.unsqueeze(1).expand(-1, num_heads, -1, -1)
+        # inputx_kv: [bsz,num_heads,k_seq_len,embed_dim]
+        Scoresx = torch.matmul(attn_weights, inputx_kv)
+        # Scoresx: [bsz,num_heads,q_seq_len,embed_dim]
+        
+        # w_v: [embed_dim,embed_dim]
+        Wv_heads = w_v.view(self.embed_dim, self.num_heads, self.head_dim)
+        # Wv_heads: [embed_dim,num_heads,head_dim]
+
+        # v_bias: [embed_dim,]
+        v_bias_heads = v_bias.reshape(1, 1, self.num_heads, self.head_dim).expand(bsz, k_seq_len, -1, -1).transpose(1, 2)
+        # v_bias_heads: [bsz,num_heads,q_seq_len,head_dim]
+
+        # attn_output: [bsz,num_heads,q_seq_len,embed_dim]
+        attn_output = torch.einsum('bnsd,dnt->bnst', Scoresx, Wv_heads) + v_bias_heads
+
+        attn_output = attn_output.transpose(1, 2)
+        # attn_output: [bsz,q_seq_len,num_heads,embed_dim]
+
+        return attn_output, attn_weights
+
+
+    def forward(
+        self,
+        hidden_states: Optional[Tuple[torch.FloatTensor]],
+        layer_past: Optional[Tuple[torch.Tensor]] = None,
+        attention_mask: Optional[torch.FloatTensor] = None,
+        head_mask: Optional[torch.FloatTensor] = None,
+        use_cache: Optional[bool] = False,
+        output_attentions: Optional[bool] = False,
+        **kwargs,
+    ) -> Tuple[Union[torch.Tensor, Tuple[torch.Tensor]], ...]:
+        attn_output, attn_weights = self._xwwx_attn_bias(
+            hidden_states,
+            attention_mask,
+            head_mask=head_mask,
+            use_bf16=False
+        )
+
+        # 重塑输出并应用投影
+        attn_output = attn_output.reshape(*attn_output.shape[:-2], -1).contiguous()
+        # attn_output:[bsz,q_seq_len,hid_dim]
+        attn_output = self.c_proj(attn_output)
+        # attn_output:[bsz,q_seq_len,hid_dim]
+        # 应用残差连接和dropout
+        attn_output = self.resid_dropout(attn_output)
+        
+        # 处理 present 值
+        if use_cache:
+            _, key_states, value_states = self.c_attn(hidden_states).split(self.split_size, dim=2)
+            # 重塑为多头形式
+            key_states = key_states.view(*key_states.shape[:-1], -1, self.head_dim).transpose(1, 2)
+            value_states = value_states.view(*value_states.shape[:-1], -1, self.head_dim).transpose(1, 2)
+            
+            # 如果有过去的缓存，将其与当前的K、V拼接
+            if layer_past is not None:
+                past_key, past_value = layer_past
+                key_states = torch.cat((past_key, key_states), dim=-2)
+                value_states = torch.cat((past_value, value_states), dim=-2)
+            
+            present = (key_states, value_states)
+        else:
+            present = None
+            
+        outputs = (attn_output, present)
+        if output_attentions:
+            outputs += (attn_weights,)
+
+        return outputs  # a, present, (attentions)
 
 class GPT2MLP(nn.Module):
     def __init__(self, intermediate_size, config):
@@ -360,7 +613,7 @@ class GPT2Block(nn.Module):
         inner_dim = config.n_inner if config.n_inner is not None else 4 * hidden_size
 
         self.ln_1 = nn.LayerNorm(hidden_size, eps=config.layer_norm_epsilon)
-        self.attn = GPT2Attention(config=config, layer_idx=layer_idx)
+        self.attn = GPT2AttentionXWWX(config=config, layer_idx=layer_idx)
         self.ln_2 = nn.LayerNorm(hidden_size, eps=config.layer_norm_epsilon)
 
         self.mlp = GPT2MLP(inner_dim, config)
@@ -1001,7 +1254,6 @@ class GPT2LMHeadModel(GPT2PreTrainedModel, GenerationMixin):
             tuple(past_state.index_select(0, beam_idx.to(past_state.device)) for past_state in layer_past)
             for layer_past in past_key_values
         )
-
 
 
 
