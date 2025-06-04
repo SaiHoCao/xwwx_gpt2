@@ -155,7 +155,7 @@ def eager_attention_forward(module, query, key, value, attention_mask, head_mask
 
 
 class GPT2Attention(nn.Module):
-    def __init__(self, config, is_cross_attention=False, layer_idx=None):
+    def __init__(self, config, layer_idx=None):
         super().__init__()
         self.config = config
         max_positions = config.max_position_embeddings
@@ -179,18 +179,15 @@ class GPT2Attention(nn.Module):
             )
 
         self.scale_attn_weights = config.scale_attn_weights
-        self.is_cross_attention = is_cross_attention
+
 
         # Layer-wise attention scaling, reordering, and upcasting
         self.scale_attn_by_inverse_layer_idx = config.scale_attn_by_inverse_layer_idx
         self.layer_idx = layer_idx
         self.reorder_and_upcast_attn = config.reorder_and_upcast_attn
 
-        if self.is_cross_attention:
-            self.c_attn = Conv1D(2 * self.embed_dim, self.embed_dim)
-            self.q_attn = Conv1D(self.embed_dim, self.embed_dim)
-        else:
-            self.c_attn = Conv1D(3 * self.embed_dim, self.embed_dim)
+        
+        self.c_attn = Conv1D(3 * self.embed_dim, self.embed_dim)
         self.c_proj = Conv1D(self.embed_dim, self.embed_dim)
 
         self.attn_dropout = nn.Dropout(config.attn_pdrop)
@@ -273,24 +270,11 @@ class GPT2Attention(nn.Module):
         layer_past: Optional[Tuple[torch.Tensor]] = None,
         attention_mask: Optional[torch.FloatTensor] = None,
         head_mask: Optional[torch.FloatTensor] = None,
-        encoder_hidden_states: Optional[torch.Tensor] = None,
-        encoder_attention_mask: Optional[torch.FloatTensor] = None,
         use_cache: Optional[bool] = False,
         output_attentions: Optional[bool] = False,
         **kwargs,
     ) -> Tuple[Union[torch.Tensor, Tuple[torch.Tensor]], ...]:
-        if encoder_hidden_states is not None:
-            if not hasattr(self, "q_attn"):
-                raise ValueError(
-                    "If class is used as cross attention, the weights `q_attn` have to be defined. "
-                    "Please make sure to instantiate class with `GPT2Attention(..., is_cross_attention=True)`."
-                )
-
-            query_states = self.q_attn(hidden_states)
-            key_states, value_states = self.c_attn(encoder_hidden_states).split(self.split_size, dim=2)
-            attention_mask = encoder_attention_mask
-        else:
-            query_states, key_states, value_states = self.c_attn(hidden_states).split(self.split_size, dim=2)
+        query_states, key_states, value_states = self.c_attn(hidden_states).split(self.split_size, dim=2)
 
         shape_q = (*query_states.shape[:-1], -1, self.head_dim)
         shape_kv = (*key_states.shape[:-1], -1, self.head_dim)
@@ -309,8 +293,7 @@ class GPT2Attention(nn.Module):
         else:
             present = None
 
-        is_cross_attention = encoder_hidden_states is not None
-        is_causal = attention_mask is None and query_states.shape[-2] > 1 and not is_cross_attention
+        is_causal = attention_mask is None and query_states.shape[-2] > 1
 
         using_eager = self.config._attn_implementation == "eager"
         attention_interface: Callable = eager_attention_forward
@@ -394,8 +377,6 @@ class GPT2Block(nn.Module):
         layer_past: Optional[Tuple[torch.Tensor]] = None,
         attention_mask: Optional[torch.FloatTensor] = None,
         head_mask: Optional[torch.FloatTensor] = None,
-        encoder_hidden_states: Optional[torch.Tensor] = None,
-        encoder_attention_mask: Optional[torch.FloatTensor] = None,
         use_cache: Optional[bool] = False,
         output_attentions: Optional[bool] = False,
     ) -> Union[Tuple[torch.Tensor], Optional[Tuple[torch.Tensor, Tuple[torch.FloatTensor, ...]]]]:
@@ -413,28 +394,6 @@ class GPT2Block(nn.Module):
         outputs = attn_outputs[1:]
         # residual connection
         hidden_states = attn_output + residual
-
-        if encoder_hidden_states is not None:
-            # add one self-attention block for cross-attention
-            if not hasattr(self, "crossattention"):
-                raise ValueError(
-                    f"If `encoder_hidden_states` are passed, {self} has to be instantiated with "
-                    "cross-attention layers by setting `config.add_cross_attention=True`"
-                )
-            residual = hidden_states
-            hidden_states = self.ln_cross_attn(hidden_states)
-            cross_attn_outputs = self.crossattention(
-                hidden_states,
-                attention_mask=attention_mask,
-                head_mask=head_mask,
-                encoder_hidden_states=encoder_hidden_states,
-                encoder_attention_mask=encoder_attention_mask,
-                output_attentions=output_attentions,
-            )
-            attn_output = cross_attn_outputs[0]
-            # residual connection
-            hidden_states = residual + attn_output
-            outputs = outputs + cross_attn_outputs[2:]  # add cross attentions if we output attention weights
 
         residual = hidden_states
         hidden_states = self.ln_2(hidden_states)
@@ -732,8 +691,6 @@ class GPT2Model(GPT2PreTrainedModel):
         position_ids: Optional[torch.LongTensor] = None,
         head_mask: Optional[torch.FloatTensor] = None,
         inputs_embeds: Optional[torch.FloatTensor] = None,
-        encoder_hidden_states: Optional[torch.Tensor] = None,
-        encoder_attention_mask: Optional[torch.FloatTensor] = None,
         use_cache: Optional[bool] = None,
         output_attentions: Optional[bool] = None,
         output_hidden_states: Optional[bool] = None,
@@ -807,21 +764,6 @@ class GPT2Model(GPT2PreTrainedModel):
                 attention_mask = attention_mask.to(dtype=self.dtype)  # fp16 compatibility
                 attention_mask = (1.0 - attention_mask) * torch.finfo(self.dtype).min
 
-        # If a 2D or 3D attention mask is provided for the cross-attention
-        # we need to make broadcastable to [batch_size, num_heads, seq_length, seq_length]
-        if self.config.add_cross_attention and encoder_hidden_states is not None:
-            encoder_batch_size, encoder_sequence_length, _ = encoder_hidden_states.size()
-            encoder_hidden_shape = (encoder_batch_size, encoder_sequence_length)
-            if encoder_attention_mask is None:
-                encoder_attention_mask = torch.ones(encoder_hidden_shape, device=device)
-            if _use_sdpa:
-                encoder_attention_mask = _prepare_4d_attention_mask_for_sdpa(
-                    mask=encoder_attention_mask, dtype=inputs_embeds.dtype, tgt_len=input_shape[-1]
-                )
-            elif not self._attn_implementation == "flash_attention_2":
-                encoder_attention_mask = self.invert_attention_mask(encoder_attention_mask)
-        else:
-            encoder_attention_mask = None
 
         # Prepare head mask if needed
         # 1.0 in head_mask indicate we keep the head
@@ -871,8 +813,6 @@ class GPT2Model(GPT2PreTrainedModel):
                     None,
                     attention_mask,
                     head_mask[i],
-                    encoder_hidden_states,
-                    encoder_attention_mask,
                     use_cache,
                     output_attentions,
                 )
@@ -882,8 +822,6 @@ class GPT2Model(GPT2PreTrainedModel):
                     layer_past=layer_past,
                     attention_mask=attention_mask,
                     head_mask=head_mask[i],
-                    encoder_hidden_states=encoder_hidden_states,
-                    encoder_attention_mask=encoder_attention_mask,
                     use_cache=use_cache,
                     output_attentions=output_attentions,
                 )
@@ -1000,8 +938,6 @@ class GPT2LMHeadModel(GPT2PreTrainedModel, GenerationMixin):
         position_ids: Optional[torch.LongTensor] = None,
         head_mask: Optional[torch.FloatTensor] = None,
         inputs_embeds: Optional[torch.FloatTensor] = None,
-        encoder_hidden_states: Optional[torch.Tensor] = None,
-        encoder_attention_mask: Optional[torch.FloatTensor] = None,
         labels: Optional[torch.LongTensor] = None,
         use_cache: Optional[bool] = None,
         output_attentions: Optional[bool] = None,
@@ -1025,8 +961,6 @@ class GPT2LMHeadModel(GPT2PreTrainedModel, GenerationMixin):
             position_ids=position_ids,
             head_mask=head_mask,
             inputs_embeds=inputs_embeds,
-            encoder_hidden_states=encoder_hidden_states,
-            encoder_attention_mask=encoder_attention_mask,
             use_cache=use_cache,
             output_attentions=output_attentions,
             output_hidden_states=output_hidden_states,
