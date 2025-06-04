@@ -385,12 +385,12 @@ class GPT2AttentionXWWX(nn.Module):
             encoder_hidden_states = hidden_states
 
         # 计算70%分位数作为阈值
-        # threshold = torch.quantile(encoder_hidden_states.abs().flatten(), 0.71)
-        # encoder_hidden_states = torch.where(
-        #     encoder_hidden_states.abs() < threshold,
-        #     torch.zeros_like(encoder_hidden_states),
-        #     encoder_hidden_states
-        # ) 
+        threshold = torch.quantile(encoder_hidden_states.abs().flatten(), 0.50)
+        encoder_hidden_states = torch.where(
+            encoder_hidden_states.abs() < threshold,
+            torch.zeros_like(encoder_hidden_states),
+            encoder_hidden_states
+        ) 
         
         # 如果启用bf16，转换精度
         if use_bf16 and torch.cuda.is_available():
@@ -476,19 +476,19 @@ class GPT2AttentionXWWX(nn.Module):
             # Apply the attention mask
             attn_weights = attn_weights + attention_mask
 
-        # 在评估时保存第4层的完整注意力矩阵（在softmax之前）
-        if self.layer_idx == 3 and not self.training:  # 只在评估时保存
-            if not hasattr(self, 'saved_scores'):
-                self.saved_scores = False
+        # # 在评估时保存第4层的完整注意力矩阵（在softmax之前）
+        # if self.layer_idx == 3 and not self.training:  # 只在评估时保存
+        #     if not hasattr(self, 'saved_scores'):
+        #         self.saved_scores = False
             
-            # 只在最后一个token时保存一次完整的注意力矩阵
-            if not self.saved_scores and q_seq_len == k_seq_len:
-                scores_np = attn_weights.detach().cpu().numpy()
-                # 保存为npy格式
-                save_path = 'scores_layer4_before_softmax.npy'
-                np.save(save_path, scores_np)
-                print(f"已保存第4层注意力矩阵到: {save_path}")
-                self.saved_scores = True  # 标记已经保存过
+        #     # 只在最后一个token时保存一次完整的注意力矩阵
+        #     if not self.saved_scores and q_seq_len == k_seq_len:
+        #         scores_np = attn_weights.detach().cpu().numpy()
+        #         # 保存为npy格式
+        #         save_path = 'scores_layer4_before_softmax.npy'
+        #         np.save(save_path, scores_np)
+        #         print(f"已保存第4层注意力矩阵到: {save_path}")
+        #         self.saved_scores = True  # 标记已经保存过
 
         # 应用softmax得到注意力权重
         attn_weights = nn.functional.softmax(attn_weights, dim=-1)
@@ -512,9 +512,9 @@ class GPT2AttentionXWWX(nn.Module):
         # encoder_hidden_states: [bsz,k_seq_len,embed_dim]
         # 将encoder_hidden_states转换为多头形式
         encoder_hidden_states = encoder_hidden_states.unsqueeze(1).expand(-1, num_heads, -1, -1)
-        # encoder_hidden_states: [bsz,num_heads,k_seq_len,head_dim]
+        # encoder_hidden_states: [bsz,num_heads,k_seq_len,embed_dim]
         Scoresx = torch.matmul(attn_weights, encoder_hidden_states)
-        # Scoresx: [bsz,num_heads,q_seq_len,head_dim]
+        # Scoresx: [bsz,num_heads,q_seq_len,embed_dim]
         
         # w_v: [embed_dim,embed_dim]
         Wv_heads = w_v.view(self.embed_dim, self.num_heads, self.head_dim)
@@ -562,8 +562,29 @@ class GPT2AttentionXWWX(nn.Module):
         # attn_output:[bsz,q_seq_len,hid_dim]
         # 应用残差连接和dropout
         attn_output = self.resid_dropout(attn_output)
-        # present 缓存的K、V
-        present = None
+        
+        # 处理 present 值
+        if use_cache:
+            # 计算当前的 key 和 value 状态
+            if encoder_hidden_states is not None:
+                key_states, value_states = self.c_attn(encoder_hidden_states).split(self.split_size, dim=2)
+            else:
+                _, key_states, value_states = self.c_attn(hidden_states).split(self.split_size, dim=2)
+            
+            # 重塑为多头形式
+            key_states = key_states.view(*key_states.shape[:-1], -1, self.head_dim).transpose(1, 2)
+            value_states = value_states.view(*value_states.shape[:-1], -1, self.head_dim).transpose(1, 2)
+            
+            # 如果有过去的缓存，将其与当前的K、V拼接
+            if layer_past is not None:
+                past_key, past_value = layer_past
+                key_states = torch.cat((past_key, key_states), dim=-2)
+                value_states = torch.cat((past_value, value_states), dim=-2)
+            
+            present = (key_states, value_states)
+        else:
+            present = None
+            
         outputs = (attn_output, present)
         if output_attentions:
             outputs += (attn_weights,)
@@ -757,19 +778,19 @@ class GPT2AttentionOri(nn.Module):
             # Apply the attention mask
             attn_weights = attn_weights + attention_mask
 
-        # 在评估时保存第4层的完整注意力矩阵（在softmax之前）
-        if self.layer_idx == 3 and not self.training:  # 只在评估时保存
-            if not hasattr(self, 'saved_scores'):
-                self.saved_scores = False
+        # # 在评估时保存第4层的完整注意力矩阵（在softmax之前）
+        # if self.layer_idx == 3 and not self.training:  # 只在评估时保存
+        #     if not hasattr(self, 'saved_scores'):
+        #         self.saved_scores = False
             
-            # 只在最后一个token时保存一次完整的注意力矩阵
-            if not self.saved_scores and q_seq_len == k_seq_len:
-                scores_np = attn_weights.detach().cpu().numpy()
-                # 保存为npy格式
-                save_path = 'scores_layer4_before_softmax.npy'
-                np.save(save_path, scores_np)
-                print(f"已保存第4层注意力矩阵到: {save_path}")
-                self.saved_scores = True  # 标记已经保存过
+        #     # 只在最后一个token时保存一次完整的注意力矩阵
+        #     if not self.saved_scores and q_seq_len == k_seq_len:
+        #         scores_np = attn_weights.detach().cpu().numpy()
+        #         # 保存为npy格式
+        #         save_path = 'scores_layer4_before_softmax.npy'
+        #         np.save(save_path, scores_np)
+        #         print(f"已保存第4层注意力矩阵到: {save_path}")
+        #         self.saved_scores = True  # 标记已经保存过
 
         # 应用softmax得到注意力权重
         attn_weights = nn.functional.softmax(attn_weights, dim=-1)
@@ -792,9 +813,9 @@ class GPT2AttentionOri(nn.Module):
         # encoder_hidden_states: [bsz,k_seq_len,embed_dim]
         # 将encoder_hidden_states转换为多头形式
         encoder_hidden_states = encoder_hidden_states.unsqueeze(1).expand(-1, num_heads, -1, -1)
-        # encoder_hidden_states: [bsz,num_heads,k_seq_len,head_dim]
+        # encoder_hidden_states: [bsz,num_heads,k_seq_len,embed_dim]
         Scoresx = torch.matmul(attn_weights, encoder_hidden_states)
-        # Scoresx: [bsz,num_heads,q_seq_len,head_dim]
+        # Scoresx: [bsz,num_heads,q_seq_len,embed_dim]
         
         # w_v: [embed_dim,embed_dim]
         Wv_heads = w_v.view(self.embed_dim, self.num_heads, self.head_dim)
@@ -857,8 +878,29 @@ class GPT2AttentionOri(nn.Module):
         # attn_output:[bsz,q_seq_len,hid_dim]
         # 应用残差连接和dropout
         attn_output = self.resid_dropout(attn_output)
-        # present 缓存的K、V
-        present = None
+        
+        # 处理 present 值
+        if use_cache:
+            # 计算当前的 key 和 value 状态
+            if encoder_hidden_states is not None:
+                key_states, value_states = self.c_attn(encoder_hidden_states).split(self.split_size, dim=2)
+            else:
+                _, key_states, value_states = self.c_attn(hidden_states).split(self.split_size, dim=2)
+            
+            # 重塑为多头形式
+            key_states = key_states.view(*key_states.shape[:-1], -1, self.head_dim).transpose(1, 2)
+            value_states = value_states.view(*value_states.shape[:-1], -1, self.head_dim).transpose(1, 2)
+            
+            # 如果有过去的缓存，将其与当前的K、V拼接
+            if layer_past is not None:
+                past_key, past_value = layer_past
+                key_states = torch.cat((past_key, key_states), dim=-2)
+                value_states = torch.cat((past_value, value_states), dim=-2)
+            
+            present = (key_states, value_states)
+        else:
+            present = None
+            
         outputs = (attn_output, present)
         if output_attentions:
             outputs += (attn_weights,)

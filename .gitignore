@@ -3,3 +3,4 @@ tmp/
 *.png
 *.pt
 *.npy
+*.nsys-rep

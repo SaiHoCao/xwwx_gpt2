@@ -354,7 +354,7 @@ def main():
         config.pad_token_id = config.eos_token_id
 
     # 更换ATTN
-    # modeling_gpt2.GPT2Attention = GPT2AttentionXWWX
+    modeling_gpt2.GPT2Attention = GPT2AttentionXWWX
     # modeling_gpt2.GPT2Attention = GPT2AttentionOri
     model = AutoModelForQuestionAnswering.from_pretrained(
         model_args.model_name_or_path,

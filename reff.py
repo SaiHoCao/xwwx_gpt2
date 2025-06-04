@@ -2,8 +2,14 @@ from transformers import GPT2LMHeadModel, GPT2Tokenizer
 from transformers.trainer_utils import get_last_checkpoint
 import torch
 import numpy as np
+from transformers.models.gpt2 import modeling_gpt2
+import torch.cuda.nvtx as nvtx  # 添加nvtx支持
 
 def generate_text(prompt, model_type="default", max_length=30):
+    # 检查CUDA是否可用
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    print(f"使用设备: {device}")
+    
     # 根据模型类型选择checkpoint
     if model_type == "raw":
         model_path = "../../gpt2"  # 未微调的原始GPT-2模型
@@ -20,17 +26,38 @@ def generate_text(prompt, model_type="default", max_length=30):
         raise ValueError("model_type must be one of: raw, default, ori, xwwx")
 
     # 加载模型和分词器
+    nvtx.range_push("模型加载")
     tokenizer = GPT2Tokenizer.from_pretrained(model_path)
-    model = GPT2LMHeadModel.from_pretrained(model_path)
+    from model import GPT2AttentionXWWX
+    modeling_gpt2.GPT2Attention = GPT2AttentionXWWX
+    model = GPT2LMHeadModel.from_pretrained(
+        model_path,
+        use_cache=False  # 设置use_cache为False
+    )
+    # 将模型移动到GPU
+    model = model.to(device)
+    nvtx.range_pop()
+
+    # 打印模型结构
+    print(model)
+    # 打印模型配置
+    print("\n模型配置:")
+    print(model.config)
     
     # 将模型设置为评估模式
     model.eval()
     
     # 对输入文本进行编码
+    nvtx.range_push("文本编码")
     inputs = tokenizer.encode(prompt, return_tensors="pt")
     attention_mask = torch.ones_like(inputs)
+    # 将输入数据移动到GPU
+    inputs = inputs.to(device)
+    attention_mask = attention_mask.to(device)
+    nvtx.range_pop()
     
     # 生成文本
+    nvtx.range_push("文本生成")
     with torch.no_grad():
         outputs = model.generate(
             inputs,
@@ -45,55 +72,31 @@ def generate_text(prompt, model_type="default", max_length=30):
             output_attentions=True,     # 确保输出attention weights
             return_dict_in_generate=True  # 返回字典格式
         )
-    
-    # 获取hidden_states和attention weights
-    hidden_states = outputs.hidden_states  # 这是一个元组，包含每一层的hidden_states
-    attention_weights = outputs.attentions  # 这是一个元组，包含每一层的attention weights
-    
-    # 保存hidden_states和attention weights
-    torch.save(hidden_states, f'hidden_states_{model_type}.pt')
-    torch.save(attention_weights, f'attention_weights_{model_type}.pt')
+    nvtx.range_pop()
     
     # 解码生成的文本
-    generated_text = tokenizer.decode(outputs.sequences[0], skip_special_tokens=True)
+    nvtx.range_push("文本解码")
+    # 将输出移回CPU进行解码
+    generated_text = tokenizer.decode(outputs.sequences[0].cpu().numpy(), skip_special_tokens=True)
+    nvtx.range_pop()
     
-    # 打印attention weights的形状信息
-    print(f"\nAttention Weights信息:")
-    for i, layer_attentions in enumerate(attention_weights):
-        # 每个layer_attentions是一个元组，包含每个时间步的attention weights
-        print(f"第{i}层 attention weights:")
-        for t, attn in enumerate(layer_attentions):
-            print(f"  时间步{t} shape: {attn.shape}")
-            # 保存softmax之前的注意力矩阵
-            if i == 3:  # 第4层
-                scores_np = attn.detach().cpu().numpy()
-                save_path = f'scores_layer4_before_softmax_{model_type}.npy'
-                np.save(save_path, scores_np)
-                print(f"  已保存softmax之前的注意力矩阵到: {save_path}")
-    
-    return generated_text, hidden_states, attention_weights
+    return generated_text
 
 if __name__ == "__main__":
     # 测试提示
     prompt = "Hello, I'm a student,"
     
-    # 测试所有模型
-    print("=== 测试未微调的原始GPT-2模型 ===")
-    generated_raw = generate_text(prompt, model_type="raw")
-    print(f"输入: {prompt}")
-    print(f"生成: {generated_raw}\n")
-    
-    print("=== 测试微调但未改变的GPT-2模型 ===")
-    generated_default = generate_text(prompt, model_type="default")
-    print(f"输入: {prompt}")
-    print(f"生成: {generated_default}\n")
-    
-    print("=== 测试改变模型定向到原始注意力计算模式 ===")
-    generated_ori = generate_text(prompt, model_type="ori")
-    print(f"输入: {prompt}")
-    print(f"生成: {generated_ori}\n")
-    
+    print(f"PyTorch版本: {torch.__version__}")
+    print(f"CUDA可用: {torch.cuda.is_available()}")
+    print(f"CUDA版本: {torch.version.cuda}")
+    if torch.cuda.is_available():
+        print(f"当前GPU: {torch.cuda.get_device_name(0)}")
+        print(f"GPU显存使用: {torch.cuda.memory_allocated(0)/1024**2:.2f}MB")
+
     print("=== 测试改变模型定向到XWWX注意力计算模式 ===")
     generated_xwwx = generate_text(prompt, model_type="xwwx")
     print(f"输入: {prompt}")
     print(f"生成: {generated_xwwx}")
+    
+    if torch.cuda.is_available():
+        print(f"GPU显存使用: {torch.cuda.memory_allocated(0)/1024**2:.2f}MB")
