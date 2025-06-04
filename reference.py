@@ -2,8 +2,6 @@ from transformers import GPT2Tokenizer
 from model_gpt2 import GPT2LMHeadModel
 from transformers.trainer_utils import get_last_checkpoint
 import torch
-import numpy as np
-from transformers.models.gpt2 import modeling_gpt2
 
 def generate_text(prompt, model_type="default", max_length=30):
     # 检查CUDA是否可用

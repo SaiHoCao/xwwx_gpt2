@@ -124,15 +124,14 @@ def eager_attention_forward(module, query, key, value, attention_mask, head_mask
     if module.scale_attn_by_inverse_layer_idx:
         attn_weights = attn_weights / float(module.layer_idx + 1)
 
-    if not module.is_cross_attention:
-        # if only "normal" attention layer implements causal mask
-        query_length, key_length = query.size(-2), key.size(-2)
-        causal_mask = module.bias[:, :, key_length - query_length : key_length, :key_length]
-        mask_value = torch.finfo(attn_weights.dtype).min
-        # Need to be a tensor, otherwise we get error: `RuntimeError: expected scalar type float but found double`.
-        # Need to be on the same device, otherwise `RuntimeError: ..., x and y to be on the same device`
-        mask_value = torch.full([], mask_value, dtype=attn_weights.dtype, device=attn_weights.device)
-        attn_weights = torch.where(causal_mask, attn_weights.to(attn_weights.dtype), mask_value)
+    # if only "normal" attention layer implements causal mask
+    query_length, key_length = query.size(-2), key.size(-2)
+    causal_mask = module.bias[:, :, key_length - query_length : key_length, :key_length]
+    mask_value = torch.finfo(attn_weights.dtype).min
+    # Need to be a tensor, otherwise we get error: `RuntimeError: expected scalar type float but found double`.
+    # Need to be on the same device, otherwise `RuntimeError: ..., x and y to be on the same device`
+    mask_value = torch.full([], mask_value, dtype=attn_weights.dtype, device=attn_weights.device)
+    attn_weights = torch.where(causal_mask, attn_weights.to(attn_weights.dtype), mask_value)
 
     if attention_mask is not None:
         # Apply the attention mask
@@ -233,15 +232,14 @@ class GPT2Attention(nn.Module):
             attn_weights = torch.baddbmm(attn_weights, q.float(), k.float(), beta=0, alpha=scale_factor)
             attn_weights = attn_weights.reshape(bsz, num_heads, q_seq_len, k_seq_len)
 
-        if not self.is_cross_attention:
-            # if only "normal" attention layer implements causal mask
-            query_length, key_length = query.size(-2), key.size(-2)
-            causal_mask = self.bias[:, :, key_length - query_length : key_length, :key_length]
-            mask_value = torch.finfo(attn_weights.dtype).min
-            # Need to be a tensor, otherwise we get error: `RuntimeError: expected scalar type float but found double`.
-            # Need to be on the same device, otherwise `RuntimeError: ..., x and y to be on the same device`
-            mask_value = torch.tensor(mask_value, dtype=attn_weights.dtype, device=attn_weights.device)
-            attn_weights = torch.where(causal_mask, attn_weights, mask_value)
+        # if only "normal" attention layer implements causal mask
+        query_length, key_length = query.size(-2), key.size(-2)
+        causal_mask = self.bias[:, :, key_length - query_length : key_length, :key_length]
+        mask_value = torch.finfo(attn_weights.dtype).min
+        # Need to be a tensor, otherwise we get error: `RuntimeError: expected scalar type float but found double`.
+        # Need to be on the same device, otherwise `RuntimeError: ..., x and y to be on the same device`
+        mask_value = torch.tensor(mask_value, dtype=attn_weights.dtype, device=attn_weights.device)
+        attn_weights = torch.where(causal_mask, attn_weights, mask_value)
 
         if attention_mask is not None:
             # Apply the attention mask
@@ -365,10 +363,6 @@ class GPT2Block(nn.Module):
         self.attn = GPT2Attention(config=config, layer_idx=layer_idx)
         self.ln_2 = nn.LayerNorm(hidden_size, eps=config.layer_norm_epsilon)
 
-        if config.add_cross_attention:
-            self.crossattention = GPT2Attention(config=config, is_cross_attention=True, layer_idx=layer_idx)
-            self.ln_cross_attn = nn.LayerNorm(hidden_size, eps=config.layer_norm_epsilon)
-
         self.mlp = GPT2MLP(inner_dim, config)
 
     def forward(
@@ -406,7 +400,7 @@ class GPT2Block(nn.Module):
         else:
             outputs = (hidden_states,) + outputs[1:]
 
-        return outputs  # hidden_states, present, (attentions, cross_attentions)
+        return outputs  # hidden_states, present, (attentions)
 
 
 class GPT2PreTrainedModel(PreTrainedModel):
@@ -788,7 +782,6 @@ class GPT2Model(GPT2PreTrainedModel):
 
         presents = () if use_cache else None
         all_self_attentions = () if output_attentions else None
-        all_cross_attentions = () if output_attentions and self.config.add_cross_attention else None
         all_hidden_states = () if output_hidden_states else None
         for i in range(len(self.h)):
             block, layer_past = self.h[i], past_key_values[i]
@@ -832,8 +825,7 @@ class GPT2Model(GPT2PreTrainedModel):
 
             if output_attentions:
                 all_self_attentions = all_self_attentions + (outputs[2 if use_cache else 1],)
-                if self.config.add_cross_attention:
-                    all_cross_attentions = all_cross_attentions + (outputs[3 if use_cache else 2],)
+
 
             # Model Parallel: If it's the last layer for that device, put things on the next device
             if self.model_parallel:
@@ -851,7 +843,7 @@ class GPT2Model(GPT2PreTrainedModel):
         if not return_dict:
             return tuple(
                 v
-                for v in [hidden_states, presents, all_hidden_states, all_self_attentions, all_cross_attentions]
+                for v in [hidden_states, presents, all_hidden_states, all_self_attentions]
                 if v is not None
             )
 
@@ -859,8 +851,7 @@ class GPT2Model(GPT2PreTrainedModel):
             last_hidden_state=hidden_states,
             past_key_values=presents,
             hidden_states=all_hidden_states,
-            attentions=all_self_attentions,
-            cross_attentions=all_cross_attentions,
+            attentions=all_self_attentions
         )
 
 
@@ -995,7 +986,6 @@ class GPT2LMHeadModel(GPT2PreTrainedModel, GenerationMixin):
             past_key_values=transformer_outputs.past_key_values,
             hidden_states=transformer_outputs.hidden_states,
             attentions=transformer_outputs.attentions,
-            cross_attentions=transformer_outputs.cross_attentions,
         )
 
     @staticmethod
