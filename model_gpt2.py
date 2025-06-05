@@ -56,62 +56,6 @@ _CHECKPOINT_FOR_DOC = "openai-community/gpt2"
 _CONFIG_FOR_DOC = "GPT2Config"
 
 
-def load_tf_weights_in_gpt2(model, config, gpt2_checkpoint_path):
-    """Load tf checkpoints in a pytorch model"""
-    try:
-        import re
-
-        import tensorflow as tf # type: ignore
-    except ImportError:
-        logger.error(
-            "Loading a TensorFlow model in PyTorch, requires TensorFlow to be installed. Please see "
-            "https://www.tensorflow.org/install/ for installation instructions."
-        )
-        raise
-    tf_path = os.path.abspath(gpt2_checkpoint_path)
-    logger.info(f"Converting TensorFlow checkpoint from {tf_path}")
-    # Load weights from TF model
-    init_vars = tf.train.list_variables(tf_path)
-    names = []
-    arrays = []
-    for name, shape in init_vars:
-        logger.info(f"Loading TF weight {name} with shape {shape}")
-        array = tf.train.load_variable(tf_path, name)
-        names.append(name)
-        arrays.append(array.squeeze())
-
-    for name, array in zip(names, arrays):
-        name = name[6:]  # skip "model/"
-        name = name.split("/")
-        pointer = model
-        for m_name in name:
-            if re.fullmatch(r"[A-Za-z]+\d+", m_name):
-                scope_names = re.split(r"(\d+)", m_name)
-            else:
-                scope_names = [m_name]
-            if scope_names[0] == "w" or scope_names[0] == "g":
-                pointer = getattr(pointer, "weight")
-            elif scope_names[0] == "b":
-                pointer = getattr(pointer, "bias")
-            elif scope_names[0] == "wpe" or scope_names[0] == "wte":
-                pointer = getattr(pointer, scope_names[0])
-                pointer = getattr(pointer, "weight")
-            else:
-                pointer = getattr(pointer, scope_names[0])
-            if len(scope_names) >= 2:
-                num = int(scope_names[1])
-                pointer = pointer[num]
-        try:
-            if pointer.shape != array.shape:
-                raise ValueError(f"Pointer shape {pointer.shape} and array shape {array.shape} mismatched")
-        except ValueError as e:
-            e.args += (pointer.shape, array.shape)
-            raise
-        logger.info(f"Initialize PyTorch weight {name}")
-        pointer.data = torch.from_numpy(array)
-    return model
-
-
 def eager_attention_forward(module, query, key, value, attention_mask, head_mask=None, **kwargs):
     attn_weights = torch.matmul(query, key.transpose(-1, -2))
 
@@ -151,7 +95,6 @@ def eager_attention_forward(module, query, key, value, attention_mask, head_mask
     attn_output = attn_output.transpose(1, 2)
 
     return attn_output, attn_weights
-
 
 class GPT2Attention(nn.Module):
     def __init__(self, config, layer_idx=None):
@@ -567,21 +510,22 @@ class GPT2AttentionXWWX(nn.Module):
         attn_output = self.resid_dropout(attn_output)
         
         # 处理 present 值
-        if use_cache:
-            _, key_states, value_states = self.c_attn(hidden_states).split(self.split_size, dim=2)
-            # 重塑为多头形式
-            key_states = key_states.view(*key_states.shape[:-1], -1, self.head_dim).transpose(1, 2)
-            value_states = value_states.view(*value_states.shape[:-1], -1, self.head_dim).transpose(1, 2)
+        present = None
+        # if use_cache:
+        #     _, key_states, value_states = self.c_attn(hidden_states).split(self.split_size, dim=2)
+        #     # 重塑为多头形式
+        #     key_states = key_states.view(*key_states.shape[:-1], -1, self.head_dim).transpose(1, 2)
+        #     value_states = value_states.view(*value_states.shape[:-1], -1, self.head_dim).transpose(1, 2)
             
-            # 如果有过去的缓存，将其与当前的K、V拼接
-            if layer_past is not None:
-                past_key, past_value = layer_past
-                key_states = torch.cat((past_key, key_states), dim=-2)
-                value_states = torch.cat((past_value, value_states), dim=-2)
+        #     # 如果有过去的缓存，将其与当前的K、V拼接
+        #     if layer_past is not None:
+        #         past_key, past_value = layer_past
+        #         key_states = torch.cat((past_key, key_states), dim=-2)
+        #         value_states = torch.cat((past_value, value_states), dim=-2)
             
-            present = (key_states, value_states)
-        else:
-            present = None
+        #     present = (key_states, value_states)
+        # else:
+        #     present = None
             
         outputs = (attn_output, present)
         if output_attentions:
@@ -605,7 +549,6 @@ class GPT2MLP(nn.Module):
         hidden_states = self.dropout(hidden_states)
         return hidden_states
 
-
 class GPT2Block(nn.Module):
     def __init__(self, config, layer_idx=None):
         super().__init__()
@@ -613,7 +556,7 @@ class GPT2Block(nn.Module):
         inner_dim = config.n_inner if config.n_inner is not None else 4 * hidden_size
 
         self.ln_1 = nn.LayerNorm(hidden_size, eps=config.layer_norm_epsilon)
-        self.attn = GPT2AttentionXWWX(config=config, layer_idx=layer_idx)
+        self.attn = GPT2Attention(config=config, layer_idx=layer_idx)
         self.ln_2 = nn.LayerNorm(hidden_size, eps=config.layer_norm_epsilon)
 
         self.mlp = GPT2MLP(inner_dim, config)
@@ -655,7 +598,6 @@ class GPT2Block(nn.Module):
 
         return outputs  # hidden_states, present, (attentions)
 
-
 class GPT2PreTrainedModel(PreTrainedModel):
     """
     An abstract class to handle weights initialization and a simple interface for downloading and loading pretrained
@@ -663,7 +605,6 @@ class GPT2PreTrainedModel(PreTrainedModel):
     """
 
     config_class = GPT2Config
-    load_tf_weights = load_tf_weights_in_gpt2
     base_model_prefix = "transformer"
     is_parallelizable = True
     supports_gradient_checkpointing = True
@@ -701,7 +642,6 @@ class GPT2PreTrainedModel(PreTrainedModel):
             if name == "c_proj.weight":
                 # Special Scaled Initialization --> There are 2 Layer Norms per Transformer Block
                 p.data.normal_(mean=0.0, std=(self.config.initializer_range / math.sqrt(2 * self.config.n_layer)))
-
 
 GPT2_START_DOCSTRING = r"""
 
@@ -786,57 +726,6 @@ GPT2_INPUTS_DOCSTRING = r"""
         return_dict (`bool`, *optional*):
             Whether or not to return a [`~utils.ModelOutput`] instead of a plain tuple.
 """
-PARALLELIZE_DOCSTRING = r"""
-    This is an experimental feature and is a subject to change at a moment's notice.
-
-    Uses a device map to distribute attention modules of the model across several devices. If no device map is given,
-    it will evenly distribute blocks across all devices.
-
-    Args:
-        device_map (`Dict[int, list]`, *optional*):
-            A dictionary that maps attention modules to devices. Note that the embedding module and LMHead are always
-            automatically mapped to the first device (for esoteric reasons). That means that the first device should
-            have fewer attention modules mapped to it than other devices. For reference, the gpt2 models have the
-            following number of attention modules:
-
-                - openai-community/gpt2: 12
-                - openai-community/gpt2-medium: 24
-                - openai-community/gpt2-large: 36
-                - openai-community/gpt2-xl: 48
-
-    Example:
-
-    ```python
-    # Here is an example of a device map on a machine with 4 GPUs using gpt2-xl, which has a total of 48 attention modules:
-    model = GPT2LMHeadModel.from_pretrained("openai-community/gpt2-xl")
-    device_map = {
-        0: [0, 1, 2, 3, 4, 5, 6, 7, 8],
-        1: [9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21],
-        2: [22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34],
-        3: [35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47],
-    }
-    model.parallelize(device_map)
-    ```
-"""
-DEPARALLELIZE_DOCSTRING = r"""
-    Moves the model to cpu from a model parallel state.
-
-    Example:
-
-    ```python
-    # On a 4 GPU machine with openai-community/gpt2-large:
-    model = GPT2LMHeadModel.from_pretrained("openai-community/gpt2-large")
-    device_map = {
-        0: [0, 1, 2, 3, 4, 5, 6, 7],
-        1: [8, 9, 10, 11, 12, 13, 14, 15],
-        2: [16, 17, 18, 19, 20, 21, 22, 23],
-        3: [24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35],
-    }
-    model.parallelize(device_map)  # Splits the model across several devices
-    model.deparallelize()  # Put the model back on cpu and cleans memory by calling torch.cuda.empty_cache()
-    ```
-"""
-
 
 @add_start_docstrings(
     "The bare GPT2 Model transformer outputting raw hidden-states without any specific head on top.",
@@ -865,50 +754,6 @@ class GPT2Model(GPT2PreTrainedModel):
 
         # Initialize weights and apply final processing
         self.post_init()
-
-    @add_start_docstrings(PARALLELIZE_DOCSTRING)
-    def parallelize(self, device_map=None):
-        # Check validity of device_map
-        warnings.warn(
-            "`GPT2Model.parallelize` is deprecated and will be removed in v5 of Transformers, you should load your"
-            " model with `device_map='balanced'` in the call to `from_pretrained`. You can also provide your own"
-            " `device_map` but it needs to be a dictionary module_name to device, so for instance {'h.0': 0, 'h.1': 1,"
-            " ...}",
-            FutureWarning,
-        )
-        self.device_map = (
-            get_device_map(len(self.h), range(torch.cuda.device_count())) if device_map is None else device_map
-        )
-        assert_device_map(self.device_map, len(self.h))
-        self.model_parallel = True
-        self.first_device = "cpu" if "cpu" in self.device_map.keys() else "cuda:" + str(min(self.device_map.keys()))
-        self.last_device = "cuda:" + str(max(self.device_map.keys()))
-        self.wte = self.wte.to(self.first_device)
-        self.wpe = self.wpe.to(self.first_device)
-        # Load onto devices
-        for k, v in self.device_map.items():
-            for block in v:
-                cuda_device = "cuda:" + str(k)
-                self.h[block] = self.h[block].to(cuda_device)
-        # ln_f to last
-        self.ln_f = self.ln_f.to(self.last_device)
-
-    @add_start_docstrings(DEPARALLELIZE_DOCSTRING)
-    def deparallelize(self):
-        warnings.warn(
-            "Like `parallelize`, `deparallelize` is deprecated and will be removed in v5 of Transformers.",
-            FutureWarning,
-        )
-        self.model_parallel = False
-        self.device_map = None
-        self.first_device = "cpu"
-        self.last_device = "cpu"
-        self.wte = self.wte.to("cpu")
-        self.wpe = self.wpe.to("cpu")
-        for index in range(len(self.h)):
-            self.h[index] = self.h[index].to("cpu")
-        self.ln_f = self.ln_f.to("cpu")
-        torch.cuda.empty_cache()
 
     def get_input_embeddings(self):
         return self.wte
@@ -1107,7 +952,6 @@ class GPT2Model(GPT2PreTrainedModel):
             attentions=all_self_attentions
         )
 
-
 @add_start_docstrings(
     """
     The GPT2 Model transformer with a language modeling head on top (linear layer with weights tied to the input
@@ -1129,37 +973,6 @@ class GPT2LMHeadModel(GPT2PreTrainedModel, GenerationMixin):
 
         # Initialize weights and apply final processing
         self.post_init()
-
-    @add_start_docstrings(PARALLELIZE_DOCSTRING)
-    def parallelize(self, device_map=None):
-        warnings.warn(
-            "`GPT2LMHeadModel.parallelize` is deprecated and will be removed in v5 of Transformers, you should load"
-            " your model with `device_map='balanced'` in the call to `from_pretrained`. You can also provide your own"
-            " `device_map` but it needs to be a dictionary module_name to device, so for instance {'transformer.h.0':"
-            " 0, 'transformer.h.1': 1, ...}",
-            FutureWarning,
-        )
-        self.device_map = (
-            get_device_map(len(self.transformer.h), range(torch.cuda.device_count()))
-            if device_map is None
-            else device_map
-        )
-        assert_device_map(self.device_map, len(self.transformer.h))
-        self.transformer.parallelize(self.device_map)
-        self.lm_head = self.lm_head.to(self.transformer.first_device)
-        self.model_parallel = True
-
-    @add_start_docstrings(DEPARALLELIZE_DOCSTRING)
-    def deparallelize(self):
-        warnings.warn(
-            "Like `parallelize`, `deparallelize` is deprecated and will be removed in v5 of Transformers.",
-            FutureWarning,
-        )
-        self.transformer.deparallelize()
-        self.transformer = self.transformer.to("cpu")
-        self.lm_head = self.lm_head.to("cpu")
-        self.model_parallel = False
-        torch.cuda.empty_cache()
 
     def get_output_embeddings(self):
         return self.lm_head
@@ -1255,15 +1068,8 @@ class GPT2LMHeadModel(GPT2PreTrainedModel, GenerationMixin):
             for layer_past in past_key_values
         )
 
-
-
 __all__ = [
-    "GPT2DoubleHeadsModel",
-    "GPT2ForQuestionAnswering",
-    "GPT2ForSequenceClassification",
-    "GPT2ForTokenClassification",
     "GPT2LMHeadModel",
     "GPT2Model",
     "GPT2PreTrainedModel",
-    "load_tf_weights_in_gpt2",
 ]
