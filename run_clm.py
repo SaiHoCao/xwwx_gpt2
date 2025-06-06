@@ -52,6 +52,7 @@ from transformers.trainer_utils import get_last_checkpoint
 from transformers.utils import check_min_version, send_example_telemetry
 from transformers.utils.versions import require_version
 
+from model_gpt2 import GPT2LMHeadModel
 from transformers.models.gpt2 import modeling_gpt2
 from model import GPT2AttentionXWWX,GPT2AttentionOri
 
@@ -428,9 +429,10 @@ def main():
             else getattr(torch, model_args.torch_dtype)
         )
         # 更换ATTN
-        modeling_gpt2.GPT2Attention = GPT2AttentionXWWX
+        # modeling_gpt2.GPT2Attention = GPT2AttentionXWWX
         # modeling_gpt2.GPT2Attention = GPT2AttentionOri
-        model = AutoModelForCausalLM.from_pretrained(
+
+        model = GPT2LMHeadModel.from_pretrained(
             model_args.model_name_or_path,
             from_tf=bool(".ckpt" in model_args.model_name_or_path),
             config=config,
@@ -442,17 +444,19 @@ def main():
             low_cpu_mem_usage=model_args.low_cpu_mem_usage,
         )
 
-
+        # print(model.config.use_cache)
+        # model.config.use_cache = False
+        # print(model.config.use_cache)
     else:
         # 更换ATTN
-        modeling_gpt2.GPT2Attention = GPT2AttentionXWWX
+        # modeling_gpt2.GPT2Attention = GPT2AttentionXWWX
         # modeling_gpt2.GPT2Attention = GPT2AttentionOri
-        model = AutoModelForCausalLM.from_config(config, trust_remote_code=model_args.trust_remote_code)
+        model = GPT2LMHeadModel.from_config(config, trust_remote_code=model_args.trust_remote_code)
 
         n_params = sum({p.data_ptr(): p.numel() for p in model.parameters()}.values())
         logger.info(f"Training new model from scratch - Total size={n_params / 2**20:.2f}M params")
 
-    print(model)
+    # print(model)
 
 
     # We resize the embeddings only when necessary to avoid index errors. If you are creating a model from scratch

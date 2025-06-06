@@ -38,8 +38,9 @@ def generate_text(prompt, model_type="default", max_length=30):
     print(model)
     # 打印模型配置
     print(model.config)
-    print(model.config._attn_implementation)
-    print(model.config.reorder_and_upcast_attn)
+    # print(model.config._attn_implementation)
+    # print(model.config.reorder_and_upcast_attn)
+    # print(model.config.use_cache)
     
     # 将模型设置为评估模式
     model.eval()
