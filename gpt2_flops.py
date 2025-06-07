@@ -3,7 +3,7 @@ import matplotlib.pyplot as plt
 from matplotlib.patches import Rectangle
 
 class GPT2PerformanceAnalyzer:
-    def __init__(self, d_model=1024, n_heads=16, d_ff=4096, vocab_size=50257, n_layers=24,fp16=False):
+    def __init__(self, d_model=1024, n_heads=16, d_ff=4096, vocab_size=50257, n_layers=24,fp16=True):
         """
         GPT-2 性能分析工具
         
@@ -138,32 +138,41 @@ class GPT2PerformanceAnalyzer:
         # QKV投影
         if not use_cache:
             # QKV(写入)
-            mem_qkv = 3 * B * Q * self.d_model * self.d_model * self.bytes_per_value
+            mem_qkv = 3 * B * Q * self.d_model  * self.bytes_per_value
+            # QKV(读取)
+            mem_qkv += 3 * B * Q * self.d_model * self.bytes_per_value
         else:
             # Q(写入)
-            mem_q =  B * Q * self.d_model * self.d_model * self.bytes_per_value
+            mem_q =  B * Q * self.d_model * self.bytes_per_value
+            # Q(读取)
+            mem_q += B * Q * self.d_model * self.bytes_per_value
             # 键值缓存(读取)
             mem_kv_cache = 2 * B * K * self.d_model * self.bytes_per_value
             mem_qkv = mem_q + mem_kv_cache
 
-        # QK^T计算,多头(写入)
-        mem_qk = B * self.n_heads * Q * K * self.d_head * self.bytes_per_value
-        # softmax,多头(写入)
-        mem_softmax = B * self.n_heads * Q * K * self.d_head * self.bytes_per_value
-        # 注意力加权和(写入)
+        # QK^T计算,多头(写入scores)
+        mem_qk = B * self.n_heads * Q * K * self.bytes_per_value
+
+        # softmax,多头(读取scores,写入scores)
+        mem_softmax = 2 * B * self.n_heads * Q * K * self.bytes_per_value
+        # 注意力加权和(读取scores,读取Value(与K一起读了),写入attn_output)
+        mem_sc = B * self.n_heads * Q * K * self.bytes_per_value #？？？
         mem_av = B * self.n_heads * Q * self.d_head * self.bytes_per_value
-        # 输出投影(写入)
-        mem_attn_out = B * Q * self.d_model * self.bytes_per_value
-        # 残差连接(写入)
-        mem_res1 = B * Q * self.d_model * self.bytes_per_value
-        # ffn1激活值(写入)
-        mem_ffn1 = B * Q * self.d_ff * self.bytes_per_value
-        # GELU(写入)
-        mem_gelu = B * Q * self.d_ff * self.bytes_per_value
-        # ffn2激活值(写入)
-        mem_ffn2 = B * Q * self.d_model * self.bytes_per_value
-        # 残差连接(写入)
-        mem_res2 = B * Q * self.d_model * self.bytes_per_value
+        mem_av += mem_sc
+        # 输出投影(读取attn_output,读取权重（已计算），写入attn_output)
+        mem_attn_out = 2 * B * Q * self.d_model * self.bytes_per_value
+        # 残差连接(读取x，读取attn_output，写入x)
+        mem_res1 = 3 * B * Q * self.d_model * self.bytes_per_value
+        # ffn1激活值(读取x,读取权重(已计算),写入激活值)
+        mem_ffn1 =  B * Q * self.d_model * self.bytes_per_value
+        mem_ffn1 += B * Q * self.d_ff * self.bytes_per_value
+        # GELU(读取激活值，写入激活值)
+        mem_gelu = 2 * B * Q * self.d_ff * self.bytes_per_value
+        # ffn2激活值(读取激活值，读取权重(已计算),写入激活值)
+        mem_ffn2 = B * Q * self.d_ff * self.bytes_per_value
+        mem_ffn2 += B * Q * self.d_model * self.bytes_per_value
+        # 残差连接(读取x，读取激活值，写入x)
+        mem_res2 = 3 * B * Q * self.d_model * self.bytes_per_value
         # 单层访存
         mem_block = mem_input + mem_qkv + mem_qk + mem_softmax + mem_av + mem_attn_out + mem_res1 + mem_ffn1 + mem_gelu + mem_ffn2 + mem_res2
         # 层数
@@ -178,7 +187,7 @@ class GPT2PerformanceAnalyzer:
         total_memory_access = mem_embed + mem_weights + mem_activation + mem_lm
         return total_memory_access
     
-    def plot_roofline(self, peak_flops=1.07e12, mem_bw=62.1e9):
+    def plot_roofline(self, peak_flops=1671e12, mem_bw=4.8e12):
         """
         绘制Roofline分析图
         
@@ -190,86 +199,93 @@ class GPT2PerformanceAnalyzer:
             print("No results to plot. Run calculations first.")
             return
         
-        # 创建绘图
         plt.figure(figsize=(12, 8))
         plt.xscale('log')
         plt.yscale('log')
         
-        # 计算Roofline曲线
         ai_range = np.logspace(-1, 3, 500)
-        roofline = np.minimum(peak_flops, mem_bw * ai_range)
-        
-        # 绘制Roofline
+        roofline = np.minimum(peak_flops, mem_bw * ai_range) / 1e12  # 转为TFLOPS/s
         plt.plot(ai_range, roofline, 'b-', linewidth=2.5, label='Roofline Bound')
         
-        # 标记拐点
         knee_point = peak_flops / mem_bw
         plt.axvline(x=knee_point, color='gray', linestyle='--', alpha=0.7)
-        plt.axhline(y=peak_flops, color='gray', linestyle='--', alpha=0.7)
+        plt.axhline(y=peak_flops/1e12, color='gray', linestyle='--', alpha=0.7)  # 也要除以1e12
         
-        # 绘制不同配置的性能点
         markers = ['o', 's', '^', 'v', '<', '>', 'p', '*', 'h', 'D']
         colors = plt.cm.tab10.colors
         
+        # 只绘制实际点，marker和理论点一致
+        legend_labels = set()
         for i, res in enumerate(self.results):
-            # 生成配置标签
             config_label = f"B={res['B']}, Q={res['Q']}"
             if res['K'] != res['Q']:
                 config_label += f", K={res['K']}"
-            
-            # 计算理论性能 (位于Roofline上)
-            theoretical_perf = min(peak_flops, res['ai'] * mem_bw)
+            actual_perf = res['flops'] / res['elapsed'] / 1e12 if res['elapsed'] > 0 else None  # 转为TFLOPS/s
 
-            # 计算实际性能 (单位：FLOPS/s)
-            actual_perf = res['flops'] / res['elapsed']
-            
-            # 绘图
             marker = markers[i % len(markers)]
             color = colors[i % len(colors)]
-            plt.scatter(res['ai'], theoretical_perf, s=120, 
-                        color=color, marker=marker, label=config_label)
+
+            # 只为每种配置加一次label
+            if actual_perf is not None and config_label not in legend_labels:
+                plt.scatter(res['ai'], actual_perf, s=120, color=color, marker=marker, label=config_label)
+                legend_labels.add(config_label)
+            elif actual_perf is not None:
+                plt.scatter(res['ai'], actual_perf, s=120, color=color, marker=marker)
+            
+            # 标注点的数值
             if actual_perf is not None:
-                plt.scatter(res['ai'], actual_perf, s=120, 
-                            color='red', marker='x', label=f"{config_label} (actual)")
+                plt.text(res['ai']*1.05, actual_perf*1.1, f"({res['ai']:.2f}, {actual_perf:.2f})", 
+                         fontsize=10, color=color, ha='left', va='bottom', alpha=0.85)
         
-        # 添加标注
-        plt.text(0.15, peak_flops * 1.2, 
-                 f'Comp. Peak: {peak_flops/1e12:.2f} TOps/s',
-                 fontsize=12, ha='left')
-        plt.text(knee_point * 15, peak_flops * 15,
+        # 峰值和带宽标注
+        plt.text(ai_range[-1]/2, (peak_flops/1e12)*1.1, 
+                 f'Comp. Peak: {peak_flops/1e12:.2f} TFLOPS/s',
+                 fontsize=12, ha='right', va='bottom', color='blue', weight='bold')
+
+        # 带宽标注
+        bw_x = knee_point / 8
+        bw_y = mem_bw * bw_x / 1e12  # 转为TFLOPS/s
+        plt.text(bw_x, bw_y, 
                  f'Mem BW: {mem_bw/1e9:.1f} GB/s',
-                 fontsize=12, ha='left')
-        plt.text(0.2, peak_flops * 0.1, 
-                 'Memory-Bound Region',
-                 fontsize=14, rotation=40, ha='left', 
-                 bbox=dict(boxstyle="round,pad=0.3", 
-                          facecolor="lightyellow", 
-                          edgecolor="orange", 
-                          alpha=0.7))
-        plt.text(15, peak_flops * 0.5, 
-                 'Compute-Bound Region',
-                 fontsize=14, ha='left', 
-                 bbox=dict(boxstyle="round,pad=0.3", 
-                          facecolor="lightblue", 
-                          edgecolor="blue", 
-                          alpha=0.7))
+                 fontsize=12, color='orange', weight='bold',
+                 rotation=30, rotation_mode='anchor',
+                 ha='left', va='bottom',
+                 bbox=dict(boxstyle="round,pad=0.2", facecolor="white", edgecolor="orange", alpha=0.7))
         
-        # 坐标轴设置
-        plt.xlabel('Operational Intensity (FLOP/Byte)', fontsize=14)
-        plt.ylabel('Theoretical Performance (FLOP/s)', fontsize=14)
-        plt.title('GPT-2 Roofline Performance Analysis', fontsize=16)
+        # plt.text(0.2, peak_flops * 0.1, 
+        #          'Memory-Bound Region',
+        #          fontsize=14, rotation=40, ha='left', 
+        #          bbox=dict(boxstyle="round,pad=0.3", 
+        #                   facecolor="lightyellow", 
+        #                   edgecolor="orange", 
+        #                   alpha=0.7))
+        # plt.text(15, peak_flops * 0.5, 
+        #          'Compute-Bound Region',
+        #          fontsize=14, ha='left', 
+        #          bbox=dict(boxstyle="round,pad=0.3", 
+        #                   facecolor="lightblue", 
+        #                   edgecolor="blue", 
+        #                   alpha=0.7))
+        
+        plt.xlabel('Operational Intensity (FLOPS/Byte)', fontsize=14)
+        plt.ylabel('Performance (TFLOPS/s)', fontsize=14)  # 改为TFLOPS/s
+        plt.title('GPT-2 Medium Roofline Performance Analysis', fontsize=16)
         plt.grid(True, which="both", ls="--", alpha=0.5)
-        plt.legend(fontsize=10, loc='upper left')
+        
+        # 去重图例
+        handles, labels = plt.gca().get_legend_handles_labels()
+        by_label = dict(zip(labels, handles))
+        plt.legend(by_label.values(), by_label.keys(), fontsize=10, loc='upper left')
         
         plt.tight_layout()
-        plt.savefig("roofline.png", dpi=200)
+        plt.savefig("roofline_medium.png", dpi=200)
         # plt.show()
     
     def print_results(self):
         """打印所有计算结果"""
-        print(f"\nGPT-2 Performance Analysis Results, bytes_per_value={self.bytes_per_value} Byte")
+        print(f"\nGPT-2 Medium Performance Analysis Results, bytes_per_value={self.bytes_per_value} Byte, n_layers={self.n_layers}")
         print("=" * 80)
-        print(f"{'Config':<25} {'FLOPs (M)':>12} {'Mem (GB)':>12} {'AI (FLOP/Byte)':>15}")
+        print(f"{'Config':<25} {'FLOPs (M)':>12} {'Mem (GB)':>12} {'OI (FLOPS/Byte)':>15}")
         print("-" * 80)
         
         for res in self.results:
@@ -279,7 +295,7 @@ class GPT2PerformanceAnalyzer:
             print(f"{config:<25} {flops_g:12.1f} {mem_gb:12.3f} {res['ai']:15.1f}")
         
         print("=" * 80)
-        print("Note: AI = Operational Intensity (FLOP/Byte)")
+        print("Note: OI = Operational Intensity (FLOPS/Byte)")
 
 
 # ====================== 示例使用 ======================
@@ -308,12 +324,12 @@ if __name__ == "__main__":
     )
     # 2. 计算不同配置下的性能
     # 全量推理 (完整序列处理)
-    analyzer.calculate_performance(B=1, Q=512, K=512, use_cache=False, elapsed=0.19388)
-    analyzer.calculate_performance(B=1, Q=1024, K=1024, use_cache=False, elapsed=0.38776)
+    analyzer.calculate_performance(B=1, Q=512, K=512, use_cache=False, elapsed=2.35)
+    analyzer.calculate_performance(B=1, Q=1024, K=1024, use_cache=False, elapsed=3.29)
     
     # 自回归生成 (仅处理当前token)
-    analyzer.calculate_performance(B=1, Q=1, K=512, use_cache=True,elapsed=0.017992)
-    analyzer.calculate_performance(B=1, Q=1, K=1024, use_cache=True,elapsed=0.035984)
+    analyzer.calculate_performance(B=1, Q=1, K=512, use_cache=True,elapsed=1.62)
+    analyzer.calculate_performance(B=1, Q=1, K=1024, use_cache=True,elapsed=1.9)
     
 
     # 3. 打印结果

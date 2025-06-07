@@ -81,35 +81,35 @@ def run_inference(model, seq_len, use_cache=False):
     print(f"\n=== 全量推理（use_cache=False）- 序列长度: {seq_len} ===")
 
     # warmup
-    # with torch.no_grad():
-    #     outputs = model(input_ids, use_cache=use_cache)
+    with torch.no_grad():
+        outputs = model(input_ids, use_cache=use_cache)
     
-    # profiler = FlopsProfiler(model)
-    # profiler.start_profile()
-    # start = time.time()
-    # with torch.no_grad():
-    #     outputs = model(input_ids, use_cache=use_cache)
-    # end = time.time()
-    # profiler.stop_profile()
-    # print(f"FLOPs: {profiler.get_total_flops(as_string=True)}")
-    # print(f"MACs: {profiler.get_total_macs(as_string=True)}")
-    # print(f"Parameters: {profiler.get_total_params(as_string=True)}")
-    # print(f"Latency: {profiler.get_total_duration(as_string=True)}")
-    # print(f"Time: {end - start:.6f} 秒")
-    # profiler.end_profile()
+    profiler = FlopsProfiler(model)
+    profiler.start_profile()
     start = time.time()
-    flops, macs, params, duration = get_model_profile(
-        model,
-        args=(input_ids,),
-        kwargs={'mode': 'forward', 'use_cache': use_cache, 'past_key_values': None},
-        print_profile=False,
-    )
+    with torch.no_grad():
+        outputs = model(input_ids, use_cache=use_cache)
     end = time.time()
-    print(f"FLOPs: {flops}")
-    print(f"MACs: {macs}")
-    print(f"Params: {params}")
-    print(f"Duration: {duration}")
+    profiler.stop_profile()
+    print(f"FLOPs: {profiler.get_total_flops(as_string=True)}")
+    print(f"MACs: {profiler.get_total_macs(as_string=True)}")
+    print(f"Parameters: {profiler.get_total_params(as_string=True)}")
+    print(f"Latency: {profiler.get_total_duration(as_string=True)}")
     print(f"Time: {end - start:.6f} 秒")
+    profiler.end_profile()
+    # start = time.time()
+    # flops, macs, params, duration = get_model_profile(
+    #     model,
+    #     args=(input_ids,),
+    #     kwargs={'mode': 'forward', 'use_cache': use_cache, 'past_key_values': None},
+    #     print_profile=False,
+    # )
+    # end = time.time()
+    # print(f"FLOPs: {flops}")
+    # print(f"MACs: {macs}")
+    # print(f"Params: {params}")
+    # print(f"Duration: {duration}")
+    # print(f"Time: {end - start:.6f} 秒")
     return
 
 def run_autoregressive_inference(model, seq_len, use_cache=True):
@@ -164,28 +164,12 @@ def run_autoregressive_inference(model, seq_len, use_cache=True):
     return
 
 
-
 if __name__ == "__main__":
-    # 1. 清理GPU缓存
-    # torch.cuda.empty_cache()
-    
-    # 2. 初始化模型
+    # 初始化模型
     model, tokenizer, device = setup_model()
     
-    # 3. 运行测试
-
     # run_autoregressive_inference(model, 1024, use_cache=True)
-    # run_inference(model, 1024, use_cache=True)
-
-    run_autoregressive_inference(model, 512, use_cache=True)
-    # run_inference(model, 512, use_cache=True)
-    
-    # # 4. 再次清理缓存
-    # torch.cuda.empty_cache()
-    
-    # # 5. 重新初始化模型
-    # model, tokenizer, device = setup_model()
-    
-    # # 6. 运行第二个测试
-    # print("\n=== 全量推理测试 ===")
     # run_inference(model, 1024, use_cache=False)
+
+    # run_autoregressive_inference(model, 512, use_cache=True)
+    run_inference(model, 512, use_cache=False)
