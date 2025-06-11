@@ -1,19 +1,21 @@
 import numpy as np
 import matplotlib.pyplot as plt
 from matplotlib.patches import Rectangle
+import matplotlib.patches as mpatches
 
-class GPT2PerformanceAnalyzer:
-    def __init__(self, d_model=1024, n_heads=16, d_ff=4096, vocab_size=50257, n_layers=24,fp16=True):
+
+class PerformanceAnalyzer:
+    def __init__(self, d_model=1024, n_heads=16, d_ff=4096, vocab_size=50257, n_layers=24, fp16=True):
         """
-        GPT-2 性能分析工具
-        
+        LLM 性能分析工具
+
         参数:
         d_model: 模型隐藏层维度 (默认: 1024)
         n_heads: 注意力头数 (默认: 16)
         d_ff: FFN层中间维度 (默认: 4096)
         vocab_size: 词表大小 (默认: 50257)
         n_layers: 层数 (默认: 24)
-        fp16: 是否使用FP16精度 (默认: False)
+        fp16: 是否使用FP16精度 (默认: True)
         """
         self.d_model = d_model
         self.n_heads = n_heads
@@ -23,174 +25,105 @@ class GPT2PerformanceAnalyzer:
         self.bytes_per_value = 2 if fp16 else 4  # FP16精度，2字节/值，FP32精度，4字节/值
         self.n_layers = n_layers
         self.results = []
-    
-    def calculate_performance(self, B, Q, K, use_cache=True, elapsed=0.0):
+
+    def calculate_performance(self, B, seq_len, use_cache=True, elapsed=0.0):
         """
         计算指定配置下的性能指标
-        
+
         参数:
         B: batch size
-        L: 层数
-        Q: 查询序列长度
-        K: 键值序列长度
+        seq_len: 序列长度
         use_cache: 是否使用缓存
         elapsed: 推理时间(ms)
-        
-        返回: (总FLOPs, 总访存字节, 操作强度)
+
+        返回: (MHA层FLOPs, MHA层访存字节, 操作强度)
         """
-        # 1. 计算总FLOPs
-        flops = self.calculate_flops(B, Q, K, use_cache)
+
+        mem, flops = self.calculate_MHA(B, seq_len, use_cache)
+
+        oi = flops / mem if mem > 0 else 0
         
-        # 2. 计算总访存量
-        memory_access = self.calculate_memory_access(B, Q, K, use_cache)
-        
-        # 3. 计算操作强度
-        ai = flops / memory_access if memory_access > 0 else 0
-        
-        # 4. 计算推理时间
-        elapsed = elapsed / 1000 # 转换为秒
-        
-        # 存储结果
+        elapsed = elapsed / 1E3  # 转换为秒
+
+        flops_s = flops / elapsed  
+
         result = {
-            'B': B, 'Q': Q, 'K': K,
+            'B': B, 'seq_len': seq_len, 'use_cache': use_cache,
             'flops': flops,
-            'memory_access': memory_access,
-            'ai': ai,
-            'elapsed': elapsed
+            'memory_access': mem,
+            'oi': oi,
+            'elapsed': elapsed,
+            'flops_s': flops_s
         }
         self.results.append(result)
-        
-        return flops, memory_access, ai
-    
-    def calculate_flops(self, B, Q, K, use_cache):
-        """计算总FLOPs"""
-        total_flops = 0
-        
-        # 嵌入层FLOPs (索引查找，无浮点计算)
-        
-        # 每层Transformer的计算
-        for _ in range(self.n_layers):
-            # 多头注意力
-            # QKV投影
-            flops_qkv = 3 * 2 * B * Q * self.d_model * self.d_model
-            # QK^T计算,多头
-            flops_qk = 2 * B * self.n_heads * Q * K * self.d_head
-            # softmax
-            # flops_softmax = 2 * B * self.n_heads * Q * K * self.d_head``
-            # 注意力加权和
-            flops_av = 2 * B * self.n_heads * Q * K * self.d_head
-            # 输出投影
-            flops_out = 2 * B * Q * self.d_model * self.d_model
-            # 残差连接
-            flops_res = B * Q * self.d_model
-            
-            # FFN层
-            flops_fc1 = 2 * B * Q * self.d_model * self.d_ff
-            # GELU
-            # flops_gelu = 3 * B * Q * self.d_ff
-            flops_fc2 = 2 * B * Q * self.d_ff * self.d_model
-            flops_res2 = B * Q * self.d_model
-            
-            # LayerNorm (2次)
-            # flops_ln = 4 * 2 * B * Q * self.d_model
-            
-            # 累加本层FLOPs
-            layer_flops = (
-                flops_qkv + flops_qk + flops_av + flops_out + flops_res +
-                flops_fc1  + flops_fc2 + flops_res2 
-            )
-            total_flops += layer_flops
-        
-        # 语言模型头
-        flops_lm = 2 * B * Q * self.d_model * self.vocab_size
-        total_flops += flops_lm
-        
-        return total_flops
-    
-    def calculate_memory_access(self, B, Q, K, use_cache):
-        """计算总访存量 (字节)"""
-        # 1. 权重访问
-        # 嵌入层权重
-        mem_embed = self.vocab_size * self.d_model * self.bytes_per_value
-        
-        # 每层权重
-        # QKV投影 + 输出投影
-        mem_attn_per_layer = (4 * self.d_model * self.d_model) * self.bytes_per_value
-        # FFN层
-        mem_ffn_per_layer = (self.d_model * self.d_ff + self.d_ff * self.d_model) * self.bytes_per_value
-        
-        # 语言模型头权重
-        mem_lm = self.d_model * self.vocab_size * self.bytes_per_value
+        return flops, mem, oi, flops_s
 
-        # 总权重访存
-        mem_weights = mem_embed + self.n_layers * (mem_attn_per_layer + mem_ffn_per_layer) + mem_lm
-        
-        # 2. 中间激活值，注意力分数访问
+    def calculate_MHA(self,B,seq_len,use_cache=True):
+        S=seq_len
+        K=seq_len
+        if use_cache:
+            S = 1
+        # 1. QKV投影：[B,S,d_model] * [d_model,3*d_model] -> [B,S,3*d_model]
+        # 读取输入x,读取权重Wq,Wk,Wv，写入Q/K/V
+        mem_qkv = B * S * self.d_model
+        mem_qkv += 3 * self.d_model * self.d_model  # 3*d_model^2
+        mem_qkv += 3 * B * S * self.d_model
+        mem_qkv *= self.bytes_per_value
+        flops_qkv = 2 * B * S * self.d_model * 3 * self.d_model
+        # 2. QK^T计算：[B,N_heads,S,d_head] * [B,N_heads,d_head,K] -> [B,N_heads,S,K]
+        # 读取Q/K，写入S
+        mem_qk = B * self.n_heads * S * self.d_head 
+        mem_qk += B * self.n_heads * K * self.d_head #use_cache 时从KVcache中读取
+        mem_qk += B * self.n_heads * S * K
+        mem_qk *= self.bytes_per_value
+        flops_qk = 2 * B * self.n_heads * S * self.d_head * K
+        # 3. softmax [B,N_heads,S,K] -> [B,N_heads,S,K]
+        # 读取S,写入P
+        mem_softmax = B * self.n_heads * S * K
+        mem_softmax += B * self.n_heads * S * K
+        mem_softmax *= self.bytes_per_value
+        flops_softmax = 5 * B * self.n_heads * S * K
+        # 4. 注意力加权和：[B,N_heads,S,K] * [B,N_heads,K,d_head] -> [B,N_heads,S,d_head]
+        # 读取P,读取V,写入O
+        mem_pv = B * self.n_heads * S * K
+        mem_pv += B * self.n_heads * K * self.d_head #use_cache 时从KVcache中读取
+        mem_pv += B * self.n_heads * S * self.d_head
+        mem_pv *= self.bytes_per_value
+        flops_pv = 2 * B * self.n_heads * S * K * self.d_head
+        # 5. 输出投影: [B,S,d_model] * [d_model,d_model] -> [B,S,d_model]
+        # 读取O,读取权重W_o,写入O
+        mem_out = B * S * self.d_model
+        mem_out += self.d_model * self.d_model
+        mem_out += B * S * self.d_model
+        mem_out *= self.bytes_per_value
+        flops_out = 2 * B * S * self.d_model * self.d_model
+        # 6. 残差连接 忽略
+        mem_acc = (mem_qkv + mem_qk + mem_softmax + mem_pv + mem_out)
+        flops_acc = flops_qkv + flops_qk + flops_softmax + flops_pv + flops_out
+        print(
+            f"\nMHA Analysis Results, B={B}, seq_len={seq_len}, use_cache={use_cache}")
+        print("=" * 120)
+        print(
+            f"{'Stage':<30} {'FLOPs (M)':>12} {'Mem (MB)':>12} {'OI(FLOPS/Byte)':>15}")
+        print(
+            f"{'QKV':<30} {flops_qkv/1e6:12.2f} {mem_qkv/1e6:12.3f} {flops_qkv/mem_qkv:12.3f}")
+        print(
+            f"{'QK':<30} {flops_qk/1e6:12.2f} {mem_qk/1e6:12.3f} {flops_qk/mem_qk:12.3f}")
+        print(
+            f"{'Softmax':<30} {flops_softmax/1e6:12.2f} {mem_softmax/1e6:12.3f} {flops_softmax/mem_softmax:12.3f}")
+        print(
+            f"{'PV':<30} {flops_pv/1e6:12.2f} {mem_pv/1e6:12.3f} {flops_pv/mem_pv:12.3f}")
+        print(
+            f"{'Out':<30} {flops_out/1e6:12.2f} {mem_out/1e6:12.3f} {flops_out/mem_out:12.3f}")
+        print(
+            f"{'Total':<30} {flops_acc/1e6:12.2f} {mem_acc/1e6:12.3f} {flops_acc/mem_acc:12.3f}")
+        print("-" * 120)
+        return mem_acc, flops_acc
 
-        # 嵌入层输入(读取)
-        mem_embed_in = B * Q * self.vocab_size * self.bytes_per_value
-        # 嵌入层输出(写入)
-        mem_embed_out = B * Q * self.d_model * self.bytes_per_value
-        mem_embed = mem_embed_in + mem_embed_out
-
-        # 输入激活值(读取)
-        mem_input = B * Q * self.d_model * self.bytes_per_value
-        # QKV投影
-        if not use_cache:
-            # QKV(写入)
-            mem_qkv = 3 * B * Q * self.d_model  * self.bytes_per_value
-            # QKV(读取)
-            mem_qkv += 3 * B * Q * self.d_model * self.bytes_per_value
-        else:
-            # Q(写入)
-            mem_q =  B * Q * self.d_model * self.bytes_per_value
-            # Q(读取)
-            mem_q += B * Q * self.d_model * self.bytes_per_value
-            # 键值缓存(读取)
-            mem_kv_cache = 2 * B * K * self.d_model * self.bytes_per_value
-            mem_qkv = mem_q + mem_kv_cache
-
-        # QK^T计算,多头(写入scores)
-        mem_qk = B * self.n_heads * Q * K * self.bytes_per_value
-
-        # softmax,多头(读取scores,写入scores)
-        mem_softmax = 2 * B * self.n_heads * Q * K * self.bytes_per_value
-        # 注意力加权和(读取scores,读取Value(与K一起读了),写入attn_output)
-        mem_sc = B * self.n_heads * Q * K * self.bytes_per_value #？？？
-        mem_av = B * self.n_heads * Q * self.d_head * self.bytes_per_value
-        mem_av += mem_sc
-        # 输出投影(读取attn_output,读取权重（已计算），写入attn_output)
-        mem_attn_out = 2 * B * Q * self.d_model * self.bytes_per_value
-        # 残差连接(读取x，读取attn_output，写入x)
-        mem_res1 = 3 * B * Q * self.d_model * self.bytes_per_value
-        # ffn1激活值(读取x,读取权重(已计算),写入激活值)
-        mem_ffn1 =  B * Q * self.d_model * self.bytes_per_value
-        mem_ffn1 += B * Q * self.d_ff * self.bytes_per_value
-        # GELU(读取激活值，写入激活值)
-        mem_gelu = 2 * B * Q * self.d_ff * self.bytes_per_value
-        # ffn2激活值(读取激活值，读取权重(已计算),写入激活值)
-        mem_ffn2 = B * Q * self.d_ff * self.bytes_per_value
-        mem_ffn2 += B * Q * self.d_model * self.bytes_per_value
-        # 残差连接(读取x，读取激活值，写入x)
-        mem_res2 = 3 * B * Q * self.d_model * self.bytes_per_value
-        # 单层访存
-        mem_block = mem_input + mem_qkv + mem_qk + mem_softmax + mem_av + mem_attn_out + mem_res1 + mem_ffn1 + mem_gelu + mem_ffn2 + mem_res2
-        # 层数
-        mem_activation = self.n_layers * mem_block
-
-        # lm头输入(读取)
-        mem_lm_in = B * Q * self.d_model * self.bytes_per_value
-        # lm头输出(写入)
-        mem_lm_out = B * Q * self.vocab_size * self.bytes_per_value
-        mem_lm = mem_lm_in + mem_lm_out
-
-        total_memory_access = mem_embed + mem_weights + mem_activation + mem_lm
-        return total_memory_access
-    
     def plot_roofline(self, peak_flops=1671e12, mem_bw=4.8e12):
         """
         绘制Roofline分析图
-        
+
         参数:
         peak_flops: 峰值计算性能 (TFLOPS/s)
         mem_bw: 内存带宽 (GB/s)
@@ -198,142 +131,173 @@ class GPT2PerformanceAnalyzer:
         if not self.results:
             print("No results to plot. Run calculations first.")
             return
-        
+
         plt.figure(figsize=(12, 8))
         plt.xscale('log')
         plt.yscale('log')
-        
-        ai_range = np.logspace(-1, 3, 500)
-        roofline = np.minimum(peak_flops, mem_bw * ai_range) / 1e12  # 转为TFLOPS/s
-        plt.plot(ai_range, roofline, 'b-', linewidth=2.5, label='Roofline Bound')
-        
+
+        oi_range = np.logspace(-1, 3, 500)
+        roofline = np.minimum(peak_flops, mem_bw *
+                              oi_range) / 1e12  # 转为TFLOPS/s
+        plt.plot(oi_range, roofline, 'b-',
+                 linewidth=2.5, label='Roofline Bound')
+
         knee_point = peak_flops / mem_bw
         plt.axvline(x=knee_point, color='gray', linestyle='--', alpha=0.7)
-        plt.axhline(y=peak_flops/1e12, color='gray', linestyle='--', alpha=0.7)  # 也要除以1e12
-        
-        markers = ['o', 's', '^', 'v', '<', '>', 'p', '*', 'h', 'D']
-        colors = plt.cm.tab10.colors
-        
+        plt.axhline(y=peak_flops/1e12, color='gray',
+                    linestyle='--', alpha=0.7)  # 也要除以1e12
+
+        markers = ['o', 's', '^', 'v', '<', '>', 'p', '*', 'h', 'D','x']
+        colors = plt.cm.tab20.colors
+
         # 只绘制实际点，marker和理论点一致
         legend_labels = set()
         for i, res in enumerate(self.results):
-            config_label = f"B={res['B']}, Q={res['Q']}"
-            if res['K'] != res['Q']:
-                config_label += f", K={res['K']}"
-            actual_perf = res['flops'] / res['elapsed'] / 1e12 if res['elapsed'] > 0 else None  # 转为TFLOPS/s
+            config_label = f"B={res['B']}, seq_len={res['seq_len']}, use_cache={res['use_cache']}"
+            actual_perf = res['flops'] / res['elapsed'] / \
+                1e12 if res['elapsed'] > 0 else None  # 转为TFLOPS/s
 
             marker = markers[i % len(markers)]
             color = colors[i % len(colors)]
 
             # 只为每种配置加一次label
             if actual_perf is not None and config_label not in legend_labels:
-                plt.scatter(res['ai'], actual_perf, s=120, color=color, marker=marker, label=config_label)
+                plt.scatter(res['oi'], actual_perf, s=120,
+                            color=color, marker=marker, label=config_label)
                 legend_labels.add(config_label)
             elif actual_perf is not None:
-                plt.scatter(res['ai'], actual_perf, s=120, color=color, marker=marker)
-            
+                plt.scatter(res['oi'], actual_perf, s=120,
+                            color=color, marker=marker)
+
             # 标注点的数值
             if actual_perf is not None:
-                plt.text(res['ai']*1.05, actual_perf*1.1, f"({res['ai']:.2f}, {actual_perf:.2f})", 
+                plt.text(res['oi']*1.05, actual_perf*1.1, f"({res['oi']:.2f}, {actual_perf:.2f})",
                          fontsize=10, color=color, ha='left', va='bottom', alpha=0.85)
-        
+
         # 峰值和带宽标注
-        plt.text(ai_range[-1]/2, (peak_flops/1e12)*1.1, 
+        plt.text(oi_range[-1]/2, (peak_flops/1e12)*1.1,
                  f'Comp. Peak: {peak_flops/1e12:.2f} TFLOPS/s',
                  fontsize=12, ha='right', va='bottom', color='blue', weight='bold')
 
         # 带宽标注
         bw_x = knee_point / 8
         bw_y = mem_bw * bw_x / 1e12  # 转为TFLOPS/s
-        plt.text(bw_x, bw_y, 
+        plt.text(bw_x, bw_y,
                  f'Mem BW: {mem_bw/1e9:.1f} GB/s',
                  fontsize=12, color='orange', weight='bold',
-                 rotation=30, rotation_mode='anchor',
+                 rotation=37, rotation_mode='anchor',
                  ha='left', va='bottom',
                  bbox=dict(boxstyle="round,pad=0.2", facecolor="white", edgecolor="orange", alpha=0.7))
-        
-        # plt.text(0.2, peak_flops * 0.1, 
-        #          'Memory-Bound Region',
-        #          fontsize=14, rotation=40, ha='left', 
-        #          bbox=dict(boxstyle="round,pad=0.3", 
-        #                   facecolor="lightyellow", 
-        #                   edgecolor="orange", 
-        #                   alpha=0.7))
-        # plt.text(15, peak_flops * 0.5, 
-        #          'Compute-Bound Region',
-        #          fontsize=14, ha='left', 
-        #          bbox=dict(boxstyle="round,pad=0.3", 
-        #                   facecolor="lightblue", 
-        #                   edgecolor="blue", 
-        #                   alpha=0.7))
-        
+
+
         plt.xlabel('Operational Intensity (FLOPS/Byte)', fontsize=14)
         plt.ylabel('Performance (TFLOPS/s)', fontsize=14)  # 改为TFLOPS/s
-        plt.title('GPT-2 Medium Roofline Performance Analysis', fontsize=16)
+        plt.title('Llama3 Roofline Model Analysis on H200', fontsize=16)
         plt.grid(True, which="both", ls="--", alpha=0.5)
-        
+
         # 去重图例
         handles, labels = plt.gca().get_legend_handles_labels()
         by_label = dict(zip(labels, handles))
-        plt.legend(by_label.values(), by_label.keys(), fontsize=10, loc='upper left')
-        
+        plt.legend(by_label.values(), by_label.keys(),
+                   fontsize=10, loc='upper left')
+
         plt.tight_layout()
-        plt.savefig("roofline_medium.png", dpi=200)
+        plt.savefig("roofline_llama3.png", dpi=200)
         # plt.show()
-    
+
     def print_results(self):
         """打印所有计算结果"""
-        print(f"\nGPT-2 Medium Performance Analysis Results, bytes_per_value={self.bytes_per_value} Byte, n_layers={self.n_layers}")
-        print("=" * 80)
-        print(f"{'Config':<25} {'FLOPs (M)':>12} {'Mem (GB)':>12} {'OI (FLOPS/Byte)':>15}")
-        print("-" * 80)
-        
+        print(
+            f"\nLLama3 Performance MHAAnalysis Results, bytes_per_value={self.bytes_per_value} Byte")
+        print("=" * 140)
+        print(
+            f"{'Config':<30} {'FLOPs (M)':>12}{'MACs (M)':>14} {'Mem (MB)':>12} {'OI(FLOPS/Byte)':>15}{'Time(ms)':>10} {'Perf(TFLOPS/s)':>15}{'Throughput(tokens/s)':>15}")
+        print("-" * 140)
+
         for res in self.results:
-            config = f"B={res['B']},Q={res['Q']},K={res['K']}"
+            config = f"B={res['B']},seq_len={res['seq_len']},use_cache={res['use_cache']}"
             flops_g = res['flops'] / 1e6
-            mem_gb = res['memory_access'] / 1e9
-            print(f"{config:<25} {flops_g:12.1f} {mem_gb:12.3f} {res['ai']:15.1f}")
-        
-        print("=" * 80)
+            macs_g = flops_g / 2
+            mem_mb = res['memory_access'] / 1e6 
+            time_ms = res['elapsed'] * 1e3
+            flops_s = res['flops_s'] / 1e12
+            throughput = res['B'] / res['elapsed']
+            print(
+                f"{config:<30} {flops_g:12.2f} {macs_g:12.2f} {mem_mb:12.3f} {res['oi']:12.3f} {time_ms:14.3f} {flops_s:15.3f} {throughput:15.3f}")
+
+        print("=" * 140)
         print("Note: OI = Operational Intensity (FLOPS/Byte)")
 
 
 # ====================== 示例使用 ======================
 if __name__ == "__main__":
-    # 1.H200 相关数据 
-    peak_flops = 1671e12 # TFLOPS FP16
-    # peak_flops = 60.0e12  # TFLOPS FP32
-    mem_bw = 4.8e12 # TB/s
+    # 1.H200 相关数据
+    peak_flops = 1671e12/2 # TFLOPS FP16
+    mem_bw = 4.8e12  # TB/s
 
-    # # 1. 创建分析器 (使用GPT-2 默认参数)
+    # 拐点
+    knee_point = peak_flops / mem_bw
+
     # analyzer = GPT2PerformanceAnalyzer(
-    #     d_model=768, 
-    #     n_heads=12,
-    #     d_ff=3072,
-    #     n_layers=12,
+    #     d_model=1024,
+    #     n_heads=16,
+    #     d_ff=4096,
+    #     n_layers=1,
     #     vocab_size=50257
     # )
-    
-    # 2. 创建分析器 (使用GPT-2 Medium默认参数)
-    analyzer = GPT2PerformanceAnalyzer(
-        d_model=1024, 
-        n_heads=16,
-        d_ff=4096,
+    # llama3
+    analyzer2 = PerformanceAnalyzer(
+        d_model=4096,
+        n_heads=32,
+        d_ff=16384,
         n_layers=1,
-        vocab_size=50257
+        vocab_size=49152
     )
-    # 2. 计算不同配置下的性能
-    # 全量推理 (完整序列处理)
-    analyzer.calculate_performance(B=1, Q=512, K=512, use_cache=False, elapsed=2.35)
-    analyzer.calculate_performance(B=1, Q=1024, K=1024, use_cache=False, elapsed=3.29)
+
+
+    print("llama3")
+
+    B = 1
+    analyzer2.calculate_performance(
+        B, seq_len=512, use_cache=True, elapsed=0.3614)
+    analyzer2.calculate_performance(
+        B, seq_len=1024, use_cache=True, elapsed=0.3546)
+    analyzer2.calculate_performance(
+        B, seq_len=2048, use_cache=True, elapsed=0.359)
+    analyzer2.calculate_performance(
+        B, seq_len=4096, use_cache=True, elapsed=0.4116)
+
+    analyzer2.calculate_performance(
+        B, seq_len=512, use_cache=False, elapsed=0.394)
+    analyzer2.calculate_performance(
+        B, seq_len=1024, use_cache=False, elapsed=0.4488)
+    analyzer2.calculate_performance(
+        B, seq_len=2048, use_cache=False, elapsed=0.813)
+    analyzer2.calculate_performance(
+        B, seq_len=4096, use_cache=False, elapsed=1.7332)
     
-    # 自回归生成 (仅处理当前token)
-    analyzer.calculate_performance(B=1, Q=1, K=512, use_cache=True,elapsed=1.62)
-    analyzer.calculate_performance(B=1, Q=1, K=1024, use_cache=True,elapsed=1.9)
-    
+    B = 8
+    analyzer2.calculate_performance(
+        B, seq_len=512, use_cache=True, elapsed=0.4064)
+    analyzer2.calculate_performance(
+        B, seq_len=1024, use_cache=True, elapsed=0.544)
+    analyzer2.calculate_performance(
+        B, seq_len=2048, use_cache=True, elapsed=0.7896)
+    analyzer2.calculate_performance(
+        B, seq_len=4096, use_cache=True, elapsed=1.4026)
+
+    analyzer2.calculate_performance(
+        B, seq_len=512, use_cache=False, elapsed=1.3234)
+    analyzer2.calculate_performance(
+        B, seq_len=1024, use_cache=False, elapsed=2.5862)
+    analyzer2.calculate_performance(
+        B, seq_len=2048, use_cache=False, elapsed=5.6734)
+    analyzer2.calculate_performance(
+        B, seq_len=4096, use_cache=False, elapsed=13.6074)
+
 
     # 3. 打印结果
-    analyzer.print_results()
-    
+    analyzer2.print_results()
+
     # 4. 绘制Roofline分析图 (使用图片提供的硬件参数)
-    analyzer.plot_roofline(peak_flops=peak_flops, mem_bw=mem_bw)
+    analyzer2.plot_roofline(peak_flops=peak_flops, mem_bw=mem_bw)

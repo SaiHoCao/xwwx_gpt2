@@ -216,6 +216,13 @@ class GPT2Attention(nn.Module):
         **kwargs,
     ) -> Tuple[Union[torch.Tensor, Tuple[torch.Tensor]], ...]:
         print(f"hidden_states.dtype: {hidden_states.dtype}")
+        # 创建计时器
+        start_event = torch.cuda.Event(enable_timing=True)
+        end_event = torch.cuda.Event(enable_timing=True)
+        
+        # 开始计时
+        torch.cuda.synchronize()
+        start_event.record()
         query_states, key_states, value_states = self.c_attn(hidden_states).split(self.split_size, dim=2)
 
         shape_q = (*query_states.shape[:-1], -1, self.head_dim)
@@ -272,7 +279,13 @@ class GPT2Attention(nn.Module):
         attn_output = attn_output.reshape(*attn_output.shape[:-2], -1).contiguous()
         attn_output = self.c_proj(attn_output)
         attn_output = self.resid_dropout(attn_output)
-        print(f"attn_output.dtype: {attn_output.dtype}")
+        # 停止计时
+        torch.cuda.synchronize()
+        end_event.record()
+        # 计算时间
+        elapsed_time = start_event.elapsed_time(end_event)
+        print(f"attn time: {elapsed_time} ms")
+        # print(f"attn_output.dtype: {attn_output.dtype}")
         outputs = (attn_output, present)
         if output_attentions:
             outputs += (attn_weights,)
