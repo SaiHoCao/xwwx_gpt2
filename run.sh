@@ -9,7 +9,7 @@ python run_clm.py \
     --do_eval \
     --num_train_epochs 3 \
     --save_steps 2000 \
-    --output_dir ./tmp/test-clm-medium
+    --output_dir ./tmp/test-clm-medium-xwwxsxv-100
 
 # torchrun --nproc_per_node=4 run_clm.py \
 #     --model_name_or_path ../../gpt2-medium \
@@ -20,4 +20,4 @@ python run_clm.py \
 #     --do_eval \
 #     --num_train_epochs 3 \
 #     --save_steps 2000 \
-#     --output_dir ./tmp/test-clm-xwwx-medium-60
+#     --output_dir ./tmp/test-clm-xwwx-medium-10

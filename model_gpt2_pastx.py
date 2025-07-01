@@ -209,20 +209,21 @@ class GPT2Attention(nn.Module):
         self,
         hidden_states: Optional[Tuple[torch.FloatTensor]],
         layer_past: Optional[Tuple[torch.Tensor]] = None,
+        layer_past_x: Optional[torch.Tensor] = None,
         attention_mask: Optional[torch.FloatTensor] = None,
         head_mask: Optional[torch.FloatTensor] = None,
         use_cache: Optional[bool] = False,
         output_attentions: Optional[bool] = False,
         **kwargs,
     ) -> Tuple[Union[torch.Tensor, Tuple[torch.Tensor]], ...]:
-        # print(f"hidden_states.dtype: {hidden_states.dtype}")
-        # # 创建计时器
-        # start_event = torch.cuda.Event(enable_timing=True)
-        # end_event = torch.cuda.Event(enable_timing=True)
+        print(f"hidden_states.dtype: {hidden_states.dtype}")
+        # 创建计时器
+        start_event = torch.cuda.Event(enable_timing=True)
+        end_event = torch.cuda.Event(enable_timing=True)
         
-        # # 开始计时
-        # torch.cuda.synchronize()
-        # start_event.record()
+        # 开始计时
+        torch.cuda.synchronize()
+        start_event.record()
         query_states, key_states, value_states = self.c_attn(hidden_states).split(self.split_size, dim=2)
 
         shape_q = (*query_states.shape[:-1], -1, self.head_dim)
@@ -239,8 +240,10 @@ class GPT2Attention(nn.Module):
 
         if use_cache is True:
             present = (key_states, value_states)
+            present_x = hidden_states
         else:
             present = None
+            present_x = None
 
         is_causal = attention_mask is None and query_states.shape[-2] > 1
 
@@ -280,17 +283,17 @@ class GPT2Attention(nn.Module):
         attn_output = self.c_proj(attn_output)
         attn_output = self.resid_dropout(attn_output)
         # 停止计时
-        # torch.cuda.synchronize()
-        # end_event.record()
-        # # 计算时间
-        # elapsed_time = start_event.elapsed_time(end_event)
-        # print(f"attn time: {elapsed_time} ms")
+        torch.cuda.synchronize()
+        end_event.record()
+        # 计算时间
+        elapsed_time = start_event.elapsed_time(end_event)
+        print(f"attn time: {elapsed_time} ms")
         # print(f"attn_output.dtype: {attn_output.dtype}")
-        outputs = (attn_output, present)
+        outputs = (attn_output, present, present_x)
         if output_attentions:
             outputs += (attn_weights,)
 
-        return outputs  # a, present, (attentions)
+        return outputs  # a, present, present_x, (attentions)
 
 class GPT2AttentionXWWX(nn.Module):
     def __init__(self, config, layer_idx=None):
@@ -337,6 +340,7 @@ class GPT2AttentionXWWX(nn.Module):
     def _xwwx_attn_bias(
         self,
         hidden_states,
+        inputx_kv,
         attention_mask=None,
         head_mask=None,
         use_bf16=False,
@@ -348,12 +352,10 @@ class GPT2AttentionXWWX(nn.Module):
         q_bias, k_bias, v_bias = self.c_attn.bias.split(
             self.split_size, dim=0)
 
-        inputx_kv = hidden_states
-
         # past_x ????
 
-        # # 稀疏x_kv,计算10%分位数作为阈值
-        threshold = torch.quantile(inputx_kv.abs().flatten(), 1)
+        # # 稀疏x_kv,计算70%分位数作为阈值
+        threshold = torch.quantile(inputx_kv.abs().flatten(), 0.60)
         inputx_kv = torch.where(
             inputx_kv.abs() < threshold,
             torch.zeros_like(inputx_kv),
@@ -502,14 +504,21 @@ class GPT2AttentionXWWX(nn.Module):
         self,
         hidden_states: Optional[Tuple[torch.FloatTensor]],
         layer_past: Optional[Tuple[torch.Tensor]] = None,
+        layer_past_x: Optional[torch.Tensor] = None,
         attention_mask: Optional[torch.FloatTensor] = None,
         head_mask: Optional[torch.FloatTensor] = None,
         use_cache: Optional[bool] = False,
         output_attentions: Optional[bool] = False,
         **kwargs,
     ) -> Tuple[Union[torch.Tensor, Tuple[torch.Tensor]], ...]:
+        
+        inputx_kv = hidden_states
+        if layer_past_x is not None:
+            inputx_kv = torch.cat((layer_past_x,hidden_states),dim=-2)
+
         attn_output, attn_weights = self._xwwx_attn_bias(
             hidden_states,
+            inputx_kv,
             attention_mask,
             head_mask=head_mask,
             use_bf16=False
@@ -524,7 +533,12 @@ class GPT2AttentionXWWX(nn.Module):
         attn_output = self.resid_dropout(attn_output)
         
         # 处理 present 值
-        present = None
+        if use_cache is True:
+            present = None
+            present_x = hidden_states
+        else:
+            present = None
+            present_x = None
         # if use_cache:
         #     _, key_states, value_states = self.c_attn(hidden_states).split(self.split_size, dim=2)
         #     # 重塑为多头形式
@@ -541,11 +555,11 @@ class GPT2AttentionXWWX(nn.Module):
         # else:
         #     present = None
             
-        outputs = (attn_output, present)
+        outputs = (attn_output, present,present_x)
         if output_attentions:
             outputs += (attn_weights,)
 
-        return outputs  # a, present, (attentions)
+        return outputs  # a, present, present_x, (attentions)
 
 class GPT2MLP(nn.Module):
     def __init__(self, intermediate_size, config):
@@ -579,6 +593,7 @@ class GPT2Block(nn.Module):
         self,
         hidden_states: Optional[Tuple[torch.FloatTensor]],
         layer_past: Optional[Tuple[torch.Tensor]] = None,
+        layer_past_x: Optional[torch.Tensor] = None,
         attention_mask: Optional[torch.FloatTensor] = None,
         head_mask: Optional[torch.FloatTensor] = None,
         use_cache: Optional[bool] = False,
@@ -589,12 +604,13 @@ class GPT2Block(nn.Module):
         attn_outputs = self.attn(
             hidden_states,
             layer_past=layer_past,
+            layer_past_x=layer_past_x,
             attention_mask=attention_mask,
             head_mask=head_mask,
             use_cache=use_cache,
             output_attentions=output_attentions,
         )
-        attn_output = attn_outputs[0]  # output_attn: a, present, (attentions)
+        attn_output = attn_outputs[0]
         outputs = attn_outputs[1:]
         # residual connection
         hidden_states = attn_output + residual
@@ -792,6 +808,7 @@ class GPT2Model(GPT2PreTrainedModel):
         self,
         input_ids: Optional[torch.LongTensor] = None,
         past_key_values: Optional[Tuple[Tuple[torch.Tensor]]] = None,
+        past_x: Optional[Tuple[torch.Tensor]] = None,
         attention_mask: Optional[torch.FloatTensor] = None,
         token_type_ids: Optional[torch.LongTensor] = None,
         position_ids: Optional[torch.LongTensor] = None,
@@ -896,7 +913,7 @@ class GPT2Model(GPT2PreTrainedModel):
         all_self_attentions = () if output_attentions else None
         all_hidden_states = () if output_hidden_states else None
         for i in range(len(self.h)):
-            block, layer_past = self.h[i], past_key_values[i]
+            block, layer_past, layer_past_x = self.h[i], past_key_values[i], past_x[i]
             # Model parallel
             if self.model_parallel:
                 torch.cuda.set_device(hidden_states.device)
@@ -925,6 +942,7 @@ class GPT2Model(GPT2PreTrainedModel):
                 outputs = block(
                     hidden_states,
                     layer_past=layer_past,
+                    layer_past_x=layer_past_x,
                     attention_mask=attention_mask,
                     head_mask=head_mask[i],
                     use_cache=use_cache,
@@ -934,6 +952,7 @@ class GPT2Model(GPT2PreTrainedModel):
             hidden_states = outputs[0]
             if use_cache is True:
                 presents = presents + (outputs[1],)
+                past_x = past_x + (outputs[2],)
 
             if output_attentions:
                 all_self_attentions = all_self_attentions + (outputs[2 if use_cache else 1],)
@@ -962,6 +981,7 @@ class GPT2Model(GPT2PreTrainedModel):
         return BaseModelOutputWithPastAndCrossAttentions(
             last_hidden_state=hidden_states,
             past_key_values=presents,
+            past_x=past_x,
             hidden_states=all_hidden_states,
             attentions=all_self_attentions
         )
@@ -1004,6 +1024,7 @@ class GPT2LMHeadModel(GPT2PreTrainedModel, GenerationMixin):
         self,
         input_ids: Optional[torch.LongTensor] = None,
         past_key_values: Optional[Tuple[Tuple[torch.Tensor]]] = None,
+        past_x: Optional[Tuple[torch.Tensor]] = None,
         attention_mask: Optional[torch.FloatTensor] = None,
         token_type_ids: Optional[torch.LongTensor] = None,
         position_ids: Optional[torch.LongTensor] = None,
@@ -1027,6 +1048,7 @@ class GPT2LMHeadModel(GPT2PreTrainedModel, GenerationMixin):
         transformer_outputs = self.transformer(
             input_ids,
             past_key_values=past_key_values,
+            past_x=past_x,
             attention_mask=attention_mask,
             token_type_ids=token_type_ids,
             position_ids=position_ids,
@@ -1064,6 +1086,7 @@ class GPT2LMHeadModel(GPT2PreTrainedModel, GenerationMixin):
             loss=loss,
             logits=lm_logits,
             past_key_values=transformer_outputs.past_key_values,
+            past_x=transformer_outputs.past_x,
             hidden_states=transformer_outputs.hidden_states,
             attentions=transformer_outputs.attentions,
         )
