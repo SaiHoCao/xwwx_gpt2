@@ -47,6 +47,7 @@ from transformers.trainer_utils import get_last_checkpoint
 from transformers.utils import check_min_version, send_example_telemetry
 from transformers.utils.versions import require_version
 
+from model_gpt2 import GPT2ForQuestionAnswering
 from transformers.models.gpt2 import modeling_gpt2
 from model import GPT2AttentionXWWX,GPT2AttentionOri
 
@@ -354,9 +355,9 @@ def main():
         config.pad_token_id = config.eos_token_id
 
     # 更换ATTN
-    modeling_gpt2.GPT2Attention = GPT2AttentionXWWX
+    # modeling_gpt2.GPT2Attention = GPT2AttentionXWWX
     # modeling_gpt2.GPT2Attention = GPT2AttentionOri
-    model = AutoModelForQuestionAnswering.from_pretrained(
+    model = GPT2ForQuestionAnswering.from_pretrained(
         model_args.model_name_or_path,
         from_tf=bool(".ckpt" in model_args.model_name_or_path),
         config=config,
