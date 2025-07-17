@@ -11,8 +11,7 @@ python run_qa.py \
   --max_seq_length 384 \
   --doc_stride 128 \
   --save_steps 5000 \
-  --output_dir ./tmp/medium_squad_ori_10 \
-  --version_2_with_negative \
+  --output_dir ./tmp/medium_squad_xwwxsxv_10 \
 
 # torchrun --nproc_per_node=4 run_qa.py \
 #   --model_name_or_path ../../gpt2-large \
