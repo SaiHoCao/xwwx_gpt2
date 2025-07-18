@@ -48,6 +48,7 @@ from transformers.utils import check_min_version, send_example_telemetry
 from transformers.utils.versions import require_version
 
 from model_gpt2 import GPT2ForQuestionAnswering
+from model_llama3 import LlamaForQuestionAnswering
 from transformers.models.gpt2 import modeling_gpt2
 from model import GPT2AttentionXWWX,GPT2AttentionOri
 
@@ -357,7 +358,8 @@ def main():
     # 更换ATTN
     # modeling_gpt2.GPT2Attention = GPT2AttentionXWWX
     # modeling_gpt2.GPT2Attention = GPT2AttentionOri
-    model = GPT2ForQuestionAnswering.from_pretrained(
+    # model = GPT2ForQuestionAnswering.from_pretrained(
+    model = LlamaForQuestionAnswering.from_pretrained(
         model_args.model_name_or_path,
         from_tf=bool(".ckpt" in model_args.model_name_or_path),
         config=config,
@@ -366,6 +368,7 @@ def main():
         token=model_args.token,
         trust_remote_code=model_args.trust_remote_code,
     )
+    model.config.use_cache = False
     print(model)
 
     # Tokenizer check: this script requires a fast tokenizer.

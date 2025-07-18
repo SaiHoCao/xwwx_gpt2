@@ -1,6 +1,6 @@
 from transformers import AutoTokenizer
 from model_gpt2 import GPT2LMHeadModel
-from model_llama import LlamaForCausalLM
+from model_llama3 import LlamaForCausalLM
 import torch
 from deepspeed.profiling.flops_profiler import FlopsProfiler
 from transformers.trainer_utils import get_last_checkpoint
