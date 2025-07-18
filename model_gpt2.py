@@ -223,9 +223,10 @@ class GPT2Attention(nn.Module):
         # # 开始计时
         # torch.cuda.synchronize()
         # start_event.record()
+
         inputx_kv = hidden_states
 
-        # 稀疏x_kv,计算10%分位数作为阈值
+        # # 稀疏x_kv,计算%分位数作为阈值
         threshold = torch.quantile(inputx_kv.abs().flatten(), 1)
         inputx_kv = torch.where(
             inputx_kv.abs() < threshold,
@@ -366,13 +367,13 @@ class GPT2AttentionXWWX(nn.Module):
 
         # past_x ????
 
-        # # 稀疏x_kv,计算10%分位数作为阈值
+        # 稀疏x_kv,分位数作为阈值
         threshold = torch.quantile(inputx_kv.abs().flatten(), 1)
         inputx_kv = torch.where(
             inputx_kv.abs() < threshold,
             torch.zeros_like(inputx_kv),
             inputx_kv
-        ) 
+        )
         
         # 如果启用bf16，转换精度
         if use_bf16 and torch.cuda.is_available():

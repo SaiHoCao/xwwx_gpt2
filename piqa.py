@@ -1,9 +1,9 @@
 import torch
 from transformers.trainer_utils import get_last_checkpoint
-from transformers import GPT2ForQuestionAnswering, GPT2Tokenizer
+from transformers import GPT2Tokenizer
+from model_gpt2 import GPT2ForQuestionAnswering
 from datasets import load_dataset,load_from_disk
 from evaluate import evaluator
-import evaluate
 
 # 1. 初始化模型
 last_checkpoint = get_last_checkpoint("./tmp/medium_squad_ori_10")
@@ -24,16 +24,17 @@ def piqa_predictor(samples):
 
 # 3. QA评估函数
 def evaluate_qa(question, candidate_answer):
-    model.eval()  # 确保模型在eval模式
+    inputs = tokenizer(
+        question,
+        candidate_answer,
+        return_tensors="pt",
+        truncation=True,
+        max_length=512
+    ).to(model.device)
+    
     with torch.no_grad():
-        inputs = tokenizer(
-            question,
-            candidate_answer,
-            return_tensors="pt",
-            truncation=True,
-            max_length=512
-        ).to(model.device)
         outputs = model(**inputs)
+    
     # 使用联合概率作为相关性得分
     start_probs = torch.nn.functional.softmax(outputs.start_logits, dim=-1)
     end_probs = torch.nn.functional.softmax(outputs.end_logits, dim=-1)
@@ -59,6 +60,15 @@ if __name__ == "__main__":
     # print("="*50)
 
     # 预测
+<<<<<<< HEAD
+    dataset = dataset.map(lambda x: {"prediction": piqa_predictor(x)})
+
+    from evaluate import load
+    accuracy = load("accuracy")
+    f1 = load("f1")
+    print("准确率:", accuracy.compute(predictions=dataset["prediction"], references=dataset["label"]))
+    print("F1分数:", f1.compute(predictions=dataset["prediction"], references=dataset["label"]))
+=======
     # dataset = dataset.select(range(100))  # 只评估前100条，调试用
     dataset = dataset.map(lambda x: {"prediction": piqa_predictor(x)}, batched=True)
 
@@ -67,3 +77,4 @@ if __name__ == "__main__":
     # f1 = load("f1")
     print("准确率:", accuracy.compute(predictions=dataset["prediction"], references=dataset["label"]))
     # print("F1分数:", f1.compute(predictions=dataset["prediction"], references=dataset["label"]))
+>>>>>>> 0c4efde8d44c83cbf675973ba41d7ec5afd3c8ee
