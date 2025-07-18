@@ -332,13 +332,13 @@ class LlamaDecoderLayer(nn.Module):
         residual = hidden_states
         hidden_states = self.input_layernorm(hidden_states)
         
-        # 创建计时器
-        start_event = torch.cuda.Event(enable_timing=True)
-        end_event = torch.cuda.Event(enable_timing=True)
+        # # 创建计时器
+        # start_event = torch.cuda.Event(enable_timing=True)
+        # end_event = torch.cuda.Event(enable_timing=True)
         
-        # 确保GPU同步
-        torch.cuda.synchronize()
-        start_event.record()
+        # # 确保GPU同步
+        # torch.cuda.synchronize()
+        # start_event.record()
         
         # Self Attention
         hidden_states, self_attn_weights = self.self_attn(
@@ -353,12 +353,13 @@ class LlamaDecoderLayer(nn.Module):
             **kwargs,
         )
         
-        # 确保GPU同步
-        torch.cuda.synchronize()
-        end_event.record()
-        torch.cuda.synchronize()  # 再次同步以确保事件完成
-        elapsed_time = start_event.elapsed_time(end_event)
-        print(f"self_attn time: {elapsed_time} ms")
+        # # 确保GPU同步
+        # torch.cuda.synchronize()
+        # end_event.record()
+        # torch.cuda.synchronize()  # 再次同步以确保事件完成
+        # elapsed_time = start_event.elapsed_time(end_event)
+        # print(f"self_attn time: {elapsed_time} ms")
+        
         hidden_states = residual + hidden_states
 
         # Fully Connected

@@ -53,6 +53,7 @@ from transformers.utils import check_min_version, send_example_telemetry
 from transformers.utils.versions import require_version
 
 from model_gpt2 import GPT2LMHeadModel
+from model_llama3 import LlamaForCausalLM
 from transformers.models.gpt2 import modeling_gpt2
 from model import GPT2AttentionXWWX,GPT2AttentionOri
 
@@ -432,7 +433,7 @@ def main():
         # modeling_gpt2.GPT2Attention = GPT2AttentionXWWX
         # modeling_gpt2.GPT2Attention = GPT2AttentionOri
 
-        model = GPT2LMHeadModel.from_pretrained(
+        model = LlamaForCausalLM.from_pretrained(
             model_args.model_name_or_path,
             from_tf=bool(".ckpt" in model_args.model_name_or_path),
             config=config,
@@ -451,11 +452,12 @@ def main():
         # 更换ATTN
         # modeling_gpt2.GPT2Attention = GPT2AttentionXWWX
         # modeling_gpt2.GPT2Attention = GPT2AttentionOri
-        model = GPT2LMHeadModel.from_config(config, trust_remote_code=model_args.trust_remote_code)
+        model = LlamaForCausalLM.from_config(config, trust_remote_code=model_args.trust_remote_code)
 
         n_params = sum({p.data_ptr(): p.numel() for p in model.parameters()}.values())
         logger.info(f"Training new model from scratch - Total size={n_params / 2**20:.2f}M params")
 
+    model.config.use_cache = False
     print(model)
 
 

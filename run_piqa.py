@@ -22,7 +22,8 @@ from typing import Optional
 import datasets
 import numpy as np
 import transformers
-from datasets import load_dataset
+from datasets import load_dataset,load_from_disk
+import evaluate
 from transformers import (
     AutoConfig,
     AutoModelForSequenceClassification,
@@ -38,6 +39,8 @@ from transformers import (
 from transformers.trainer_utils import get_last_checkpoint
 from transformers.utils import check_min_version, send_example_telemetry
 from transformers.utils.versions import require_version
+
+from model_gpt2 import GPT2ForSequenceClassification
 
 logger = logging.getLogger(__name__)
 
@@ -147,6 +150,9 @@ def main():
     else:
         model_args, data_args, training_args = parser.parse_args_into_dataclasses()
 
+    # Sending telemetry (可选)
+    send_example_telemetry("run_piqa", model_args, data_args)
+
     # Setup logging
     logging.basicConfig(
         format="%(asctime)s - %(levelname)s - %(name)s - %(message)s",
@@ -154,10 +160,22 @@ def main():
         handlers=[logging.StreamHandler(sys.stdout)],
     )
 
+    if training_args.should_log:
+        transformers.utils.logging.set_verbosity_info()
+
     log_level = training_args.get_process_log_level()
     logger.setLevel(log_level)
     datasets.utils.logging.set_verbosity(log_level)
     transformers.utils.logging.set_verbosity(log_level)
+    transformers.utils.logging.enable_default_handler()
+    transformers.utils.logging.enable_explicit_format()
+
+    # Log on each process the small summary:
+    logger.warning(
+        f"Process rank: {training_args.local_rank}, device: {training_args.device}, n_gpu: {training_args.n_gpu}, "
+        + f"distributed training: {training_args.parallel_mode.value == 'distributed'}, 16-bits training: {training_args.fp16}"
+    )
+    logger.info(f"Training/evaluation parameters {training_args}")
 
     # Detecting last checkpoint.
     last_checkpoint = None
@@ -178,12 +196,13 @@ def main():
     set_seed(training_args.seed)
 
     # Load dataset
-    raw_datasets = load_dataset(
-        data_args.dataset_name,
-        data_args.dataset_config_name,
-        cache_dir=model_args.cache_dir,
-        token=model_args.token,
-    )
+    # raw_datasets = load_dataset(
+    #     data_args.dataset_name,
+    #     data_args.dataset_config_name,
+    #     cache_dir=model_args.cache_dir,
+    #     token=model_args.token,
+    # )
+    raw_datasets = load_from_disk(data_args.dataset_name)
 
     # Load pretrained model and tokenizer
     config = AutoConfig.from_pretrained(
@@ -209,7 +228,7 @@ def main():
         tokenizer.pad_token = tokenizer.eos_token
         config.pad_token_id = config.eos_token_id
 
-    model = AutoModelForSequenceClassification.from_pretrained(
+    model = GPT2ForSequenceClassification.from_pretrained(
         model_args.model_name_or_path,
         from_tf=bool(".ckpt" in model_args.model_name_or_path),
         config=config,
@@ -232,8 +251,6 @@ def main():
             max_length=data_args.max_seq_length,
             padding="max_length",
         )
-        
-        # 添加标签
         tokenized_examples["labels"] = examples["label"]
         
         return tokenized_examples
@@ -248,26 +265,40 @@ def main():
             questions,
             truncation=True,
             max_length=data_args.max_seq_length,
-            padding="max_length",
+            padding="max_length" if data_args.pad_to_max_length else False,
         )
-        
-        # 添加标签
         tokenized_examples["labels"] = examples["label"]
         
         return tokenized_examples
 
     # 处理数据集
-    train_dataset = raw_datasets["train"].map(
-        prepare_train_features,
-        batched=True,
-        remove_columns=raw_datasets["train"].column_names,
-    )
+    if training_args.do_train:
+        if "train" not in raw_datasets:
+            raise ValueError("--do_train requires a train dataset")
+        train_dataset = raw_datasets["train"].map(
+            prepare_train_features,
+            batched=True,
+            remove_columns=raw_datasets["train"].column_names,
+        )
+        if data_args.max_train_samples is not None:
+            max_train_samples = min(len(train_dataset), data_args.max_train_samples)
+            train_dataset = train_dataset.select(range(max_train_samples))
+    else:
+        train_dataset = None
 
-    validation_dataset = raw_datasets["validation"].map(
-        prepare_validation_features,
-        batched=True,
-        remove_columns=raw_datasets["validation"].column_names,
-    )
+    if training_args.do_eval:
+        if "validation" not in raw_datasets:
+            raise ValueError("--do_eval requires a validation dataset")
+        validation_dataset = raw_datasets["validation"].map(
+            prepare_validation_features,
+            batched=True,
+            remove_columns=raw_datasets["validation"].column_names,
+        )
+        if data_args.max_eval_samples is not None:
+            max_eval_samples = min(len(validation_dataset), data_args.max_eval_samples)
+            validation_dataset = validation_dataset.select(range(max_eval_samples))
+    else:
+        validation_dataset = None
 
     # 数据整理器
     data_collator = (
@@ -276,10 +307,11 @@ def main():
         else DataCollatorWithPadding(tokenizer, pad_to_multiple_of=8 if training_args.fp16 else None)
     )
 
-    # 计算指标
+    metric = evaluate.load("./metrics/accuracy", cache_dir=model_args.cache_dir)
+
     def compute_metrics(p: EvalPrediction):
-        predictions = np.argmax(p.predictions, axis=1)
-        return {"accuracy": (predictions == p.label_ids).mean()}
+        preds = np.argmax(p.predictions, axis=1)
+        return metric.compute(predictions=preds, references=p.label_ids)
 
     # 初始化Trainer
     trainer = transformers.Trainer(
@@ -318,6 +350,21 @@ def main():
         metrics["eval_samples"] = min(max_eval_samples, len(validation_dataset))
         trainer.log_metrics("eval", metrics)
         trainer.save_metrics("eval", metrics)
+
+    # 可选：推送到hub或创建model card
+    kwargs = {"finetuned_from": model_args.model_name_or_path, "tasks": "sequence-classification"}
+    if data_args.dataset_name is not None:
+        kwargs["dataset_tags"] = data_args.dataset_name
+        if data_args.dataset_config_name is not None:
+            kwargs["dataset_args"] = data_args.dataset_config_name
+            kwargs["dataset"] = f"{data_args.dataset_name} {data_args.dataset_config_name}"
+        else:
+            kwargs["dataset"] = data_args.dataset_name
+
+    if hasattr(training_args, "push_to_hub") and training_args.push_to_hub:
+        trainer.push_to_hub(**kwargs)
+    elif hasattr(trainer, "create_model_card"):
+        trainer.create_model_card(**kwargs)
 
 if __name__ == "__main__":
     main() 
