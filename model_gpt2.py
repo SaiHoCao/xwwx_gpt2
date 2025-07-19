@@ -35,6 +35,7 @@ from transformers.modeling_outputs import (
     QuestionAnsweringModelOutput,
     SequenceClassifierOutputWithPast,
     TokenClassifierOutput,
+    MultipleChoiceModelOutput,
 )
 from transformers.modeling_utils import ALL_ATTENTION_FUNCTIONS, PreTrainedModel, SequenceSummary
 from transformers.pytorch_utils import Conv1D, find_pruneable_heads_and_indices, prune_conv1d_layer
@@ -1331,7 +1332,100 @@ class GPT2ForSequenceClassification(GPT2PreTrainedModel):
             attentions=transformer_outputs.attentions,
         )
 
+class GPT2ForMultipleChoice(GPT2PreTrainedModel):
+    """
+    GPT2用于多选任务的模型。输入为(batch_size, num_choices, seq_len)，输出为(batch_size, num_choices)。
+    适用于如SWAG、COPA等多选任务。
+    """
+    def __init__(self, config):
+        super().__init__(config)
+        self.transformer = GPT2Model(config)
+        classifier_dropout = (
+            config.summary_first_dropout if hasattr(config, "summary_first_dropout") and config.summary_first_dropout is not None
+            else 0.1
+        )
+        self.dropout = nn.Dropout(classifier_dropout)
+        self.classifier = nn.Linear(config.hidden_size, 1)
+        self.post_init()
+
+    def forward(
+        self,
+        input_ids: Optional[torch.LongTensor] = None,
+        attention_mask: Optional[torch.FloatTensor] = None,
+        token_type_ids: Optional[torch.LongTensor] = None,
+        position_ids: Optional[torch.LongTensor] = None,
+        head_mask: Optional[torch.FloatTensor] = None,
+        inputs_embeds: Optional[torch.FloatTensor] = None,
+        labels: Optional[torch.LongTensor] = None,
+        output_attentions: Optional[bool] = None,
+        output_hidden_states: Optional[bool] = None,
+        return_dict: Optional[bool] = None,
+        past_key_values: Optional[Tuple[Tuple[torch.Tensor]]] = None,
+        use_cache: Optional[bool] = None,
+    ) -> MultipleChoiceModelOutput:
+        r"""
+        labels (`torch.LongTensor` of shape `(batch_size,)`, *optional*):
+            Labels for computing the multiple choice classification loss. Indices should be in `[0, ..., num_choices-1]`.
+        """
+        return_dict = return_dict if return_dict is not None else self.config.use_return_dict
+
+        if input_ids is not None:
+            batch_size = input_ids.shape[0]
+            num_choices = input_ids.shape[1]
+            seq_length = input_ids.shape[2]
+        elif inputs_embeds is not None:
+            batch_size = inputs_embeds.shape[0]
+            num_choices = inputs_embeds.shape[1]
+            seq_length = inputs_embeds.shape[2]
+        else:
+            raise ValueError("You have to specify either input_ids or inputs_embeds")
+
+        # 展平为(batch_size * num_choices, seq_len)
+        flat_input_ids = input_ids.view(-1, seq_length) if input_ids is not None else None
+        flat_attention_mask = attention_mask.view(-1, seq_length) if attention_mask is not None else None
+        flat_token_type_ids = token_type_ids.view(-1, seq_length) if token_type_ids is not None else None
+        flat_position_ids = position_ids.view(-1, seq_length) if position_ids is not None else None
+        flat_inputs_embeds = inputs_embeds.view(-1, seq_length, inputs_embeds.size(-1)) if inputs_embeds is not None else None
+
+        transformer_outputs = self.transformer(
+            input_ids=flat_input_ids,
+            attention_mask=flat_attention_mask,
+            token_type_ids=flat_token_type_ids,
+            position_ids=flat_position_ids,
+            head_mask=head_mask,
+            inputs_embeds=flat_inputs_embeds,
+            past_key_values=past_key_values,
+            use_cache=use_cache,
+            output_attentions=output_attentions,
+            output_hidden_states=output_hidden_states,
+            return_dict=return_dict,
+        )
+        hidden_states = transformer_outputs[0]  # (batch_size*num_choices, seq_len, hidden_size)
+
+        # 取每个序列最后一个token的hidden state（与GPT2ForSequenceClassification一致）
+        pooled_output = hidden_states[:, -1, :]  # (batch_size*num_choices, hidden_size)
+        pooled_output = self.dropout(pooled_output)
+        logits = self.classifier(pooled_output)  # (batch_size*num_choices, 1)
+        reshaped_logits = logits.view(batch_size, num_choices)  # (batch_size, num_choices)
+
+        loss = None
+        if labels is not None:
+            loss_fct = CrossEntropyLoss()
+            loss = loss_fct(reshaped_logits, labels)
+
+        if not return_dict:
+            output = (reshaped_logits,) + transformer_outputs[1:]
+            return ((loss,) + output) if loss is not None else output
+
+        return MultipleChoiceModelOutput(
+            loss=loss,
+            logits=reshaped_logits,
+            hidden_states=transformer_outputs.hidden_states if hasattr(transformer_outputs, 'hidden_states') else None,
+            attentions=transformer_outputs.attentions if hasattr(transformer_outputs, 'attentions') else None,
+        )
+
 __all__ = [
+    "GPT2ForMultipleChoice",
     "GPT2ForSequenceClassification",
     "GPT2ForQuestionAnswering",
     "GPT2LMHeadModel",

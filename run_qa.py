@@ -355,11 +355,7 @@ def main():
         tokenizer.pad_token = tokenizer.eos_token
         config.pad_token_id = config.eos_token_id
 
-    # 更换ATTN
-    # modeling_gpt2.GPT2Attention = GPT2AttentionXWWX
-    # modeling_gpt2.GPT2Attention = GPT2AttentionOri
-    # model = GPT2ForQuestionAnswering.from_pretrained(
-    model = LlamaForQuestionAnswering.from_pretrained(
+    model = GPT2ForQuestionAnswering.from_pretrained(
         model_args.model_name_or_path,
         from_tf=bool(".ckpt" in model_args.model_name_or_path),
         config=config,
@@ -368,8 +364,8 @@ def main():
         token=model_args.token,
         trust_remote_code=model_args.trust_remote_code,
     )
-    model.config.use_cache = False
-    print(model)
+    # model.config.use_cache = False
+    # print(model)
 
     # Tokenizer check: this script requires a fast tokenizer.
     if not isinstance(tokenizer, PreTrainedTokenizerFast):
@@ -664,24 +660,24 @@ def main():
     )
 
     # Training
-    # if training_args.do_train:
-    #     checkpoint = None
-    #     if training_args.resume_from_checkpoint is not None:
-    #         checkpoint = training_args.resume_from_checkpoint
-    #     elif last_checkpoint is not None:
-    #         checkpoint = last_checkpoint
-    #     train_result = trainer.train(resume_from_checkpoint=checkpoint)
-    #     trainer.save_model()  # Saves the tokenizer too for easy upload
+    if training_args.do_train:
+        checkpoint = None
+        if training_args.resume_from_checkpoint is not None:
+            checkpoint = training_args.resume_from_checkpoint
+        elif last_checkpoint is not None:
+            checkpoint = last_checkpoint
+        train_result = trainer.train(resume_from_checkpoint=checkpoint)
+        trainer.save_model()  # Saves the tokenizer too for easy upload
 
-    #     metrics = train_result.metrics
-    #     max_train_samples = (
-    #         data_args.max_train_samples if data_args.max_train_samples is not None else len(train_dataset)
-    #     )
-    #     metrics["train_samples"] = min(max_train_samples, len(train_dataset))
+        metrics = train_result.metrics
+        max_train_samples = (
+            data_args.max_train_samples if data_args.max_train_samples is not None else len(train_dataset)
+        )
+        metrics["train_samples"] = min(max_train_samples, len(train_dataset))
 
-    #     trainer.log_metrics("train", metrics)
-    #     trainer.save_metrics("train", metrics)
-    #     trainer.save_state()
+        trainer.log_metrics("train", metrics)
+        trainer.save_metrics("train", metrics)
+        trainer.save_state()
 
     # Evaluation
     if training_args.do_eval:

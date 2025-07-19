@@ -17,18 +17,20 @@ def collect_results(pattern_str, base_dir="./tmp"):
         pattern_str: 目录名模式，形如 "0_medium_squad_ori"
         base_dir: 基础目录路径
     """
+    import numpy as np
     results = []
+    all_metrics = set()
     
     # 检查基础目录是否存在
     if not os.path.exists(base_dir):
         print(f"错误: {base_dir} 目录不存在")
-        return results
+        return results, []
     
     # 构建正则表达式模式
     # 将 pattern_str 中的特殊字符转义
     escaped_pattern = re.escape(pattern_str)
     # 构建完整的正则表达式，匹配后面的数字和"_eval"
-    pattern = re.compile(f'{escaped_pattern}_(\d+)_eval')
+    pattern = re.compile(f'{escaped_pattern}_(\\d+)_eval')
     
     print(f"🔍 使用模式 '{pattern_str}_xxx_eval' 在 {base_dir} 中搜索...")
     
@@ -48,27 +50,26 @@ def collect_results(pattern_str, base_dir="./tmp"):
                     # 读取评估结果
                     with open(result_file, 'r') as f:
                         data = json.load(f)
-                    
-                    # 提取精确匹配和F1分数，保留三位小数
-                    exact_match = round(data.get("eval_exact_match", 0), 3)
-                    f1_score = round(data.get("eval_f1", 0), 3)
-                    
-                    # 添加到结果列表
-                    results.append({
-                        "sparsity": sparsity,
-                        "exact_match": exact_match,
-                        "f1_score": f1_score
-                    })
-                    
+                    # 只从指定的key中选取
+                    metric_keys = ["eval_accuracy", "eval_exact_match", "eval_f1_score"]
+                    metrics = {k: round(v, 3) for k, v in data.items() if k in metric_keys}
+                    all_metrics.update(metrics.keys())
+                    # 结果字典
+                    result = {"sparsity": sparsity}
+                    result.update(metrics)
+                    results.append(result)
                     print(f"✅ 已读取 {dirname} 的评估结果")
                 except Exception as e:
                     print(f"⚠️ 读取 {result_file} 时出错: {str(e)}")
             else:
                 print(f"⚠️ 找不到评估结果文件: {result_file}")
-    
-    # 按稀疏度排序
+    # 补齐缺失的指标为 np.nan
+    for r in results:
+        for m in all_metrics:
+            if m not in r:
+                r[m] = np.nan
     results.sort(key=lambda x: x["sparsity"])
-    return results
+    return results, list(all_metrics)
 
 def save_results(results, output_prefix, output_dir="./results"):
     """
@@ -121,42 +122,22 @@ def plot_results(df, output_prefix, title=None, output_dir="./results"):
     os.makedirs(output_dir, exist_ok=True)
     
     output_file = os.path.join(output_dir, f"{output_prefix}_sparsity_plot.png")
-    
     plt.figure(figsize=(10, 6))
     
-    # 创建双y轴
-    ax1 = plt.gca()
-    ax2 = ax1.twinx()
-    
-    # 绘制精确匹配分数
-    ax1.plot(df["sparsity"], df["exact_match"], "b-o", label="Exact Match")
-    ax1.set_xlabel("Sparsity (%)")
-    ax1.set_ylabel("Exact Match", color="b")
-    ax1.tick_params(axis="y", labelcolor="b")
-    
-    # 绘制F1分数
-    ax2.plot(df["sparsity"], df["f1_score"], "r-s", label="F1 Score")
-    ax2.set_ylabel("F1", color="r")
-    ax2.tick_params(axis="y", labelcolor="r")
-    
-    # 添加图例
-    lines1, labels1 = ax1.get_legend_handles_labels()
-    lines2, labels2 = ax2.get_legend_handles_labels()
-    ax1.legend(lines1 + lines2, labels1 + labels2, loc="best")
-    
-    # 设置图表标题
+    # 自动遍历所有指标（除了sparsity）
+    metric_cols = [col for col in df.columns if col != "sparsity"]
+    for col in metric_cols:
+        plt.plot(df["sparsity"], df[col], marker='o', label=col)
+    plt.xlabel("Sparsity (%)")
+    plt.ylabel("Score")
+    plt.legend()
     if title is None:
-        title = f"{output_prefix} Sparsity vs Performance"
+        title = f"{output_prefix} Sparsity vs Metrics"
     plt.title(title)
-    
     plt.grid(True, linestyle="--", alpha=0.7)
-    
-    # 保存图表
     plt.tight_layout()
     plt.savefig(output_file)
     print(f"📊 性能图表已保存到 {output_file}")
-    
-    # 显示图表
     plt.show()
 
 def parse_arguments():
@@ -201,7 +182,7 @@ def main():
     print(f"🚀 开始为模式 '{args.pattern}' 收集评估结果...")
     
     # 收集结果
-    results = collect_results(args.pattern, args.base_dir)
+    results, all_metrics = collect_results(args.pattern, args.base_dir)
     
     if not results:
         print(f"⚠️ 没有找到匹配模式 '{args.pattern}' 的评估结果")

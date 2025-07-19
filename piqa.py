@@ -60,7 +60,6 @@ if __name__ == "__main__":
     # print("="*50)
 
     # 预测
-<<<<<<< HEAD
     dataset = dataset.map(lambda x: {"prediction": piqa_predictor(x)})
 
     from evaluate import load
@@ -68,13 +67,3 @@ if __name__ == "__main__":
     f1 = load("f1")
     print("准确率:", accuracy.compute(predictions=dataset["prediction"], references=dataset["label"]))
     print("F1分数:", f1.compute(predictions=dataset["prediction"], references=dataset["label"]))
-=======
-    # dataset = dataset.select(range(100))  # 只评估前100条，调试用
-    dataset = dataset.map(lambda x: {"prediction": piqa_predictor(x)}, batched=True)
-
-    # from evaluate import load
-    accuracy = evaluate.load("./metrics/accuracy")
-    # f1 = load("f1")
-    print("准确率:", accuracy.compute(predictions=dataset["prediction"], references=dataset["label"]))
-    # print("F1分数:", f1.compute(predictions=dataset["prediction"], references=dataset["label"]))
->>>>>>> 0c4efde8d44c83cbf675973ba41d7ec5afd3c8ee

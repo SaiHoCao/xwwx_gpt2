@@ -423,42 +423,30 @@ def main():
             "You can do it from another script, save it, and load it from here, using --tokenizer_name."
         )
 
-    if model_args.model_name_or_path:
-        torch_dtype = (
-            model_args.torch_dtype
-            if model_args.torch_dtype in ["auto", None]
-            else getattr(torch, model_args.torch_dtype)
-        )
-        # 更换ATTN
-        # modeling_gpt2.GPT2Attention = GPT2AttentionXWWX
-        # modeling_gpt2.GPT2Attention = GPT2AttentionOri
 
-        model = LlamaForCausalLM.from_pretrained(
-            model_args.model_name_or_path,
-            from_tf=bool(".ckpt" in model_args.model_name_or_path),
-            config=config,
-            cache_dir=model_args.cache_dir,
-            revision=model_args.model_revision,
-            token=model_args.token,
-            trust_remote_code=model_args.trust_remote_code,
-            torch_dtype=torch_dtype,
-            low_cpu_mem_usage=model_args.low_cpu_mem_usage,
-        )
+    torch_dtype = (
+        model_args.torch_dtype
+        if model_args.torch_dtype in ["auto", None]
+        else getattr(torch, model_args.torch_dtype)
+    )
 
-        # print(model.config.use_cache)
-        # model.config.use_cache = False
-        # print(model.config.use_cache)
-    else:
-        # 更换ATTN
-        # modeling_gpt2.GPT2Attention = GPT2AttentionXWWX
-        # modeling_gpt2.GPT2Attention = GPT2AttentionOri
-        model = LlamaForCausalLM.from_config(config, trust_remote_code=model_args.trust_remote_code)
+    # 更换ATTN
+    # modeling_gpt2.GPT2Attention = GPT2AttentionXWWX
+    # modeling_gpt2.GPT2Attention = GPT2AttentionOri
 
-        n_params = sum({p.data_ptr(): p.numel() for p in model.parameters()}.values())
-        logger.info(f"Training new model from scratch - Total size={n_params / 2**20:.2f}M params")
-
-    model.config.use_cache = False
-    print(model)
+    model = GPT2LMHeadModel.from_pretrained(
+        model_args.model_name_or_path,
+        from_tf=bool(".ckpt" in model_args.model_name_or_path),
+        config=config,
+        cache_dir=model_args.cache_dir,
+        revision=model_args.model_revision,
+        token=model_args.token,
+        trust_remote_code=model_args.trust_remote_code,
+        torch_dtype=torch_dtype,
+        low_cpu_mem_usage=model_args.low_cpu_mem_usage,
+    )
+    # model.config.use_cache = False
+    # print(model)
 
 
     # We resize the embeddings only when necessary to avoid index errors. If you are creating a model from scratch
