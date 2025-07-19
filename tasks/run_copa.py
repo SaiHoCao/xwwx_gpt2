@@ -45,6 +45,8 @@ from transformers import (
 from transformers.trainer_utils import get_last_checkpoint
 from transformers.utils import check_min_version, send_example_telemetry
 from transformers.utils.versions import require_version
+
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from model_gpt2 import GPT2ForMultipleChoice
 
 logger = logging.getLogger(__name__)
@@ -407,7 +409,7 @@ def main():
     #     if data_args.pad_to_max_length
     #     else DataCollatorWithPadding(tokenizer)
     # )
-    # metric = evaluate.load("./metrics/accuracy", cache_dir=model_args.cache_dir)
+    # metric = evaluate.load("../metrics/accuracy", cache_dir=model_args.cache_dir)
 
     # def compute_metrics(p):
     #     preds = np.argmax(p.predictions, axis=1)

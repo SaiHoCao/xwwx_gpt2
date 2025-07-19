@@ -27,8 +27,7 @@ from typing import Optional
 import datasets
 import evaluate
 from datasets import load_dataset,load_from_disk
-from trainer_qa import QuestionAnsweringTrainer
-from utils_qa import postprocess_qa_predictions
+
 
 import transformers
 from transformers import (
@@ -47,10 +46,13 @@ from transformers.trainer_utils import get_last_checkpoint
 from transformers.utils import check_min_version, send_example_telemetry
 from transformers.utils.versions import require_version
 
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from model_gpt2 import GPT2ForQuestionAnswering
 from model_llama3 import LlamaForQuestionAnswering
 from transformers.models.gpt2 import modeling_gpt2
 from model import GPT2AttentionXWWX,GPT2AttentionOri
+from trainer_qa import QuestionAnsweringTrainer
+from utils_qa import postprocess_qa_predictions
 
 # Will error if the minimal version of Transformers is not installed. Remove at your own risks.
 check_min_version("4.52.0.dev0")
@@ -641,7 +643,7 @@ def main():
     # metric = evaluate.load(
     #     "squad_v2" if data_args.version_2_with_negative else "squad", cache_dir=model_args.cache_dir
     # )
-    metric = evaluate.load("./metrics/squad", cache_dir=model_args.cache_dir)
+    metric = evaluate.load("../metrics/squad", cache_dir=model_args.cache_dir)
 
     def compute_metrics(p: EvalPrediction):
         return metric.compute(predictions=p.predictions, references=p.label_ids)

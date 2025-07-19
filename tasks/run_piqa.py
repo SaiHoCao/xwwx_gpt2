@@ -40,6 +40,7 @@ from transformers.trainer_utils import get_last_checkpoint
 from transformers.utils import check_min_version, send_example_telemetry
 from transformers.utils.versions import require_version
 
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from model_gpt2 import GPT2ForSequenceClassification
 
 logger = logging.getLogger(__name__)
@@ -307,7 +308,7 @@ def main():
         else DataCollatorWithPadding(tokenizer, pad_to_multiple_of=8 if training_args.fp16 else None)
     )
 
-    metric = evaluate.load("./metrics/accuracy", cache_dir=model_args.cache_dir)
+    metric = evaluate.load("../metrics/accuracy", cache_dir=model_args.cache_dir)
 
     def compute_metrics(p: EvalPrediction):
         preds = np.argmax(p.predictions, axis=1)

@@ -52,6 +52,7 @@ from transformers.trainer_utils import get_last_checkpoint
 from transformers.utils import check_min_version, send_example_telemetry
 from transformers.utils.versions import require_version
 
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from model_gpt2 import GPT2LMHeadModel
 from model_llama3 import LlamaForCausalLM
 from transformers.models.gpt2 import modeling_gpt2
@@ -579,8 +580,8 @@ def main():
                 logits = logits[0]
             return logits.argmax(dim=-1)
 
-        metric = evaluate.load("./metrics/accuracy", cache_dir=model_args.cache_dir)
-        # metric = evaluate.load("./metrics/perplexity", cache_dir=model_args.cache_dir)
+        metric = evaluate.load("../metrics/accuracy", cache_dir=model_args.cache_dir)
+        # metric = evaluate.load("../metrics/perplexity", cache_dir=model_args.cache_dir)
 
         def compute_metrics(eval_preds):
             preds, labels = eval_preds

@@ -6,7 +6,7 @@ import os
 # MODEL_NAMES = ["ori", "xwwxsxv"]  # 模型名列表
 # TASK = "copa"                     # 任务名
 # METRIC = "eval_accuracy"          # 指标名
-# RESULTS_DIR = "./results"         # csv文件所在目录
+# RESULTS_DIR = "../results"         # csv文件所在目录
 # OUTPUT_PREFIX = "copa_eval_accuracy"  # 输出图片前缀
 # PLOT_TITLE = "COPA accuracy in different sparsity on GPT2-Medium"      # 图表标题
 # # ====================================
@@ -15,7 +15,7 @@ import os
 # MODEL_NAMES = ["ori", "xwwxsxv"]  # 模型名列表
 # TASK = "piqa"                     # 任务名
 # METRIC = "eval_accuracy"          # 指标名
-# RESULTS_DIR = "./results"         # csv文件所在目录
+# RESULTS_DIR = "../results"         # csv文件所在目录
 # OUTPUT_PREFIX = "piqa_eval_accuracy"  # 输出图片前缀
 # PLOT_TITLE = "PIQA accuracy in different sparsity on GPT2-Medium"      # 图表标题
 # # ====================================
@@ -24,7 +24,7 @@ import os
 # MODEL_NAMES = ["ori", "xwwxsxv"]  # 模型名列表
 # TASK = "wiki2"                     # 任务名
 # METRIC = "perplexity"          # 指标名
-# RESULTS_DIR = "./results"         # csv文件所在目录
+# RESULTS_DIR = "../results"         # csv文件所在目录
 # OUTPUT_PREFIX = "wiki2_perplexity"  # 输出图片前缀
 # PLOT_TITLE = "WikiText2 perplexity in different sparsity on GPT2-Medium"      # 图表标题
 # # ====================================
@@ -33,7 +33,7 @@ import os
 MODEL_NAMES = ["ori", "xwwxsxv"]  # 模型名列表
 TASK = "squad"                     # 任务名
 METRICS = ["eval_exact_match", "eval_f1"]        # 指标名
-RESULTS_DIR = "./results"         # csv文件所在目录
+RESULTS_DIR = "../results"         # csv文件所在目录
 OUTPUT_PREFIX = "squad_metrics"  # 输出图片前缀
 PLOT_TITLE = "SQuAD_metrics in different sparsity on GPT2-Medium"      # 图表标题
 

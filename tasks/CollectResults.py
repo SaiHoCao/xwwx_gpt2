@@ -5,73 +5,73 @@ import pandas as pd
 import matplotlib.pyplot as plt
 
 # # ====== 你只需修改下面这几个变量 ======
-# BASE_DIR = "./tmp/medium-xwwxsxv-copa/"           # 基础目录
+# BASE_DIR = "../tmp/medium-xwwxsxv-copa/"           # 基础目录
 # PATTERN_PREFIX = "medium_xwwxsxv_copa"            # 文件夹前缀
 # METRIC_KEYS = ["eval_accuracy"]                   # 要收集的指标名列表
-# OUTPUT_DIR = "./results"                          # 结果保存目录
+# OUTPUT_DIR = "../results"                          # 结果保存目录
 # OUTPUT_PREFIX = "medium_xwwxsxv_copa"             # 输出文件前缀
 # PLOT_TITLE = None                                  # 图表标题（可选）
 # # ====================================
 
 # # ====== 你只需修改下面这几个变量 ======
-# BASE_DIR = "./tmp/medium-ori-copa/"           # 基础目录
+# BASE_DIR = "../tmp/medium-ori-copa/"           # 基础目录
 # PATTERN_PREFIX = "medium_ori_copa"            # 文件夹前缀
 # METRIC_KEYS = ["eval_accuracy"]                   # 要收集的指标名列表
-# OUTPUT_DIR = "./results"                          # 结果保存目录
+# OUTPUT_DIR = "../results"                          # 结果保存目录
 # OUTPUT_PREFIX = "medium_ori_copa"             # 输出文件前缀
 # PLOT_TITLE = None                                  # 图表标题（可选）
 # # ====================================
 
 # # ====== 你只需修改下面这几个变量 ======
-# BASE_DIR = "./tmp/medium-xwwxsxv-piqa/"           # 基础目录
+# BASE_DIR = "../tmp/medium-xwwxsxv-piqa/"           # 基础目录
 # PATTERN_PREFIX = "medium_xwwxsxv_piqa"            # 文件夹前缀
 # METRIC_KEYS = ["eval_accuracy"]                   # 要收集的指标名列表
-# OUTPUT_DIR = "./results"                          # 结果保存目录
+# OUTPUT_DIR = "../results"                          # 结果保存目录
 # OUTPUT_PREFIX = "medium_xwwxsxv_piqa"             # 输出文件前缀
 # PLOT_TITLE = None                                  # 图表标题（可选）
 # # ====================================
 
 # # ====== 你只需修改下面这几个变量 ======
-# BASE_DIR = "./tmp/medium-ori-piqa/"           # 基础目录
+# BASE_DIR = "../tmp/medium-ori-piqa/"           # 基础目录
 # PATTERN_PREFIX = "medium_ori_piqa"            # 文件夹前缀
 # METRIC_KEYS = ["eval_accuracy"]                   # 要收集的指标名列表
-# OUTPUT_DIR = "./results"                          # 结果保存目录
+# OUTPUT_DIR = "../results"                          # 结果保存目录
 # OUTPUT_PREFIX = "medium_ori_piqa"             # 输出文件前缀
 # PLOT_TITLE = None                                  # 图表标题（可选）
 # # ====================================
 
 # # ====== 你只需修改下面这几个变量 ======
-# BASE_DIR = "./tmp/medium-xwwxsxv-wiki2/"           # 基础目录
+# BASE_DIR = "../tmp/medium-xwwxsxv-wiki2/"           # 基础目录
 # PATTERN_PREFIX = "medium_xwwxsxv_wiki2"            # 文件夹前缀
 # METRIC_KEYS = ["perplexity"]                       # 要收集的指标名列表
-# OUTPUT_DIR = "./results"                          # 结果保存目录
+# OUTPUT_DIR = "../results"                          # 结果保存目录
 # OUTPUT_PREFIX = "medium_xwwxsxv_wiki2"             # 输出文件前缀
 # PLOT_TITLE = None                                  # 图表标题（可选）
 # # ====================================
 
 # # ====== 你只需修改下面这几个变量 ======
-# BASE_DIR = "./tmp/medium-ori-wiki2/"           # 基础目录
+# BASE_DIR = "../tmp/medium-ori-wiki2/"           # 基础目录
 # PATTERN_PREFIX = "medium_ori_wiki2"            # 文件夹前缀
 # METRIC_KEYS = ["perplexity"]                       # 要收集的指标名列表
-# OUTPUT_DIR = "./results"                          # 结果保存目录
+# OUTPUT_DIR = "../results"                          # 结果保存目录
 # OUTPUT_PREFIX = "medium_ori_wiki2"             # 输出文件前缀
 # PLOT_TITLE = None                                  # 图表标题（可选）
 # # ====================================
 
 # ====== 你只需修改下面这几个变量 ======
-BASE_DIR = "./tmp/medium-ori-squad/"           # 基础目录
+BASE_DIR = "../tmp/medium-ori-squad/"           # 基础目录
 PATTERN_PREFIX = "medium_ori_squad"            # 文件夹前缀
 METRIC_KEYS = ["eval_exact_match","eval_f1"]                       # 要收集的指标名列表
-OUTPUT_DIR = "./results"                          # 结果保存目录
+OUTPUT_DIR = "../results"                          # 结果保存目录
 OUTPUT_PREFIX = "medium_ori_squad"             # 输出文件前缀
 PLOT_TITLE = None                                  # 图表标题（可选）
 # ====================================
 
 # ====== 你只需修改下面这几个变量 ======
-BASE_DIR = "./tmp/medium-xwwxsxv-squad/"           # 基础目录
+BASE_DIR = "../tmp/medium-xwwxsxv-squad/"           # 基础目录
 PATTERN_PREFIX = "medium_xwwxsxv_squad"            # 文件夹前缀
 METRIC_KEYS = ["eval_exact_match","eval_f1"]                       # 要收集的指标名列表
-OUTPUT_DIR = "./results"                          # 结果保存目录
+OUTPUT_DIR = "../results"                          # 结果保存目录
 OUTPUT_PREFIX = "medium_xwwxsxv_squad"             # 输出文件前缀
 PLOT_TITLE = None                                  # 图表标题（可选）
 # ====================================

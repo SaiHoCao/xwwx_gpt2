@@ -6,29 +6,29 @@ import time
 
 # 配置参数 copa
 # SHELL_FILE = 'run_copa.sh'
-# MODEL_FILE = 'model_gpt2.py'
-# OUTPUT_DIR_TEMPLATE = './tmp/medium-xwwxsxv-copa/medium_xwwxsxv_copa_{sparsity}_eval'
+# MODEL_FILE = '../model_gpt2.py'
+# OUTPUT_DIR_TEMPLATE = '../tmp/medium-xwwxsxv-copa/medium_xwwxsxv_copa_{sparsity}_eval'
 # LOG_FILE = 'copa_xwwxsxv_eval_results.log'
 # EVAL_METRICS = ['eval_accuracy']
 
 # 配置参数 wiki
 # SHELL_FILE = 'run_clm.sh'
-# MODEL_FILE = 'model_gpt2.py'
-# OUTPUT_DIR_TEMPLATE = './tmp/medium-xwwxsxv-wiki2/medium_xwwxsxv_wiki2_{sparsity}_eval'
+# MODEL_FILE = '../model_gpt2.py'
+# OUTPUT_DIR_TEMPLATE = '../tmp/medium-xwwxsxv-wiki2/medium_xwwxsxv_wiki2_{sparsity}_eval'
 # LOG_FILE = 'wiki2_xwwxsxv_eval_results.log'
 # EVAL_METRICS = ['perplexity']
 
 # 配置参数 wiki
 # SHELL_FILE = 'run_clm.sh'
-# MODEL_FILE = 'model_gpt2.py'
-# OUTPUT_DIR_TEMPLATE = './tmp/medium-ori-wiki2/medium_ori_wiki2_{sparsity}_eval'
+# MODEL_FILE = '../model_gpt2.py'
+# OUTPUT_DIR_TEMPLATE = '../tmp/medium-ori-wiki2/medium_ori_wiki2_{sparsity}_eval'
 # LOG_FILE = 'wiki2_ori_eval_results.log'
 # EVAL_METRICS = ['perplexity']
 
 # 配置参数squad
 SHELL_FILE = 'run_qa.sh'
-MODEL_FILE = 'model_gpt2.py'
-OUTPUT_DIR_TEMPLATE = './tmp/medium-ori-squad/medium_ori_squad_{sparsity}_eval'
+MODEL_FILE = '../model_gpt2.py'
+OUTPUT_DIR_TEMPLATE = '../tmp/medium-ori-squad/medium_ori_squad_{sparsity}_eval'
 LOG_FILE = 'squad_ori_eval_results.log'
 EVAL_METRICS = ['eval_exact_match', 'eval_f1']  # 支持1-2个评估指标
 
